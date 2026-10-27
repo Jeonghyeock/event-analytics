@@ -8,6 +8,24 @@ import pg from "pg";
 export const NEW_DATABASE_OPTIONS =
   "TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'";
 
+// 손으로 만든 개발 DB가 위 옵션 없이(template1, OS 정렬) 만들어졌으면, 정렬이 CI와 달라도 테스트(복제 DB)로는 드러나지 않는다.
+// 그래서 마이그레이션 명령이 손대기 전에 본다. 정렬은 DB를 만든 뒤에 바꿀 수 없어 다시 만들어야 한다.
+export async function checkDatabaseLocale(url: string) {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    const { rows } = await client.query<{ name: string; ok: boolean }>(
+      `select datname as name, pg_encoding_to_char(encoding) = 'UTF8' and datlocprovider = 'b' and datlocale = 'C.UTF-8' as ok
+         from pg_database where datname = current_database()`,
+    );
+    if (!rows[0]?.ok) {
+      throw new Error(`DB ${rows[0]?.name}의 정렬이 builtin C.UTF-8이 아닙니다. README의 CREATE DATABASE(${NEW_DATABASE_OPTIONS})로 다시 만듭니다`);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 // 같은 서버·같은 계정으로 다른 DB를 가리키는 주소.
 export function withDatabase(url: string, database: string) {
   const u = new URL(url);

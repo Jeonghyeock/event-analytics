@@ -45,6 +45,7 @@ jobs:
           # 테스트는 앱 role로 돈다. 소유자 주소를 받는 테스트도 정해 둔다.
           found="$(src ownerDatabaseUrl)"
           expected="$(printf '%s\n' \
+            apps/api/src/db/databases.test.ts \
             apps/api/src/db/migrate.test.ts \
             apps/api/src/db/roles.test.ts \
             apps/api/test/global-setup.ts)"

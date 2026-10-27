@@ -9,7 +9,8 @@ if (!databaseUrl) throw new Error("DATABASE_URL이 없습니다(.env 또는 환�
 const port = Number(process.env.PORT ?? 3002);
 const host = process.env.HOST ?? "127.0.0.1";
 
-const pool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-api" });
+// 연결을 받기까지 5초를 넘기면 실패한다. 한도가 없으면 DB에 닿지 않을 때 /health가 503 대신 멈춰 있다.
+const pool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-api", connectionTimeoutMillis: 5_000 });
 const app = buildApp(pool, { logger: true });
 app.addHook("onClose", () => pool.end());
 

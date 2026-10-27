@@ -13,7 +13,7 @@ export const NO_TRANSACTION_MARKER = "-- 트랜잭션 밖";
 const BREAKPOINT = "--> statement-breakpoint";
 // 실행기 둘이 같은 DB에 끼어들지 않게 잡는 세션 advisory lock 번호.
 const MIGRATION_LOCK = 7_340_102;
-// 앱 쓰기의 잠금 대기 한도(seat-booking은 3초)보다 짧아야, 마이그레이션 뒤에 줄 선 앱 쓰기가 자기 한도에 닿지 않는다.
+// 앱 쓰기의 잠금 대기 한도(1단계 수집에서 정한다. seat-booking은 3초)보다 짧아야, 마이그레이션 뒤에 줄 선 앱 쓰기가 자기 한도에 닿지 않는다.
 const LOCK_TIMEOUT = "1s";
 // 잠금 대기 초과와 교착이면 잠깐 쉬고 다시 한다. 다시 할 때마다 잠금 줄이 다시 생기므로 쉬는 시간을 늘린다.
 const RETRY_CODES = new Set(["55P03", "40P01"]);
