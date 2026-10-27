@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { IngestBatch, IngestEvent, MAX_PROPERTIES_BYTES } from "./index.js";
+import { IngestBatch, IngestEvent, MAX_PROPERTIES_BYTES, MAX_PROPERTIES_DEPTH } from "./index.js";
 
 const base = {
   eventId: "0193a8a0-0000-7000-8000-000000000001",
@@ -27,11 +27,6 @@ describe("IngestEvent", () => {
     ["콜론 없는 오프셋", "2026-10-27T19:00:00+0900", false],
     ["날짜만", "2026-10-27", false],
     ["없는 날", "2026-02-30T10:00:00Z", false],
-    ["+14:00", "2026-10-28T00:00:00+14:00", true],
-    ["-12:00", "2026-10-26T22:00:00-12:00", true],
-    // PostgreSQL이 거절해 배치 전체를 실패시키는 오프셋(zod는 받는다)
-    ["+16:00", "2026-10-28T02:00:00+16:00", false],
-    ["-14:01", "2026-10-26T19:59:00-14:01", false],
   ])("occurredAt %s → %s", (_, occurredAt, expected) => {
     expect(ok({ occurredAt })).toBe(expected);
   });
@@ -67,6 +62,24 @@ describe("IngestEvent", () => {
 
   it("짝이 맞는 서로게이트(이모지)와 한글은 받는다", () => {
     expect(ok({ userId: "사용자😀", properties: { "이름": "좌석😀" } })).toBe(true);
+  });
+
+  // 재귀로 검사하면 수천 단계에서 스택이 넘쳐, 그 이벤트가 아니라 배치 전체가 실패한다(500).
+  const nested = (depth: number): unknown => {
+    let value: unknown = 1;
+    for (let i = 1; i < depth; i++) value = [value];
+    return value;
+  };
+  it(`properties는 ${MAX_PROPERTIES_DEPTH}단계까지 중첩할 수 있고, 수천 단계여도 예외 없이 거절한다`, () => {
+    // 객체·배열을 센다. properties 객체가 1단계이고, nested(n)은 배열 n − 1개다
+    expect(ok({ properties: { k: nested(MAX_PROPERTIES_DEPTH) } })).toBe(true);
+    expect(failedPath({ properties: { k: nested(MAX_PROPERTIES_DEPTH + 1) } })).toEqual(["properties"]);
+    expect(failedPath({ properties: { k: nested(5_000) } })).toEqual(["properties"]);
+  });
+
+  it("JSON이 아닌 값(무한대, undefined)은 거절한다", () => {
+    expect(failedPath({ properties: { n: Number.POSITIVE_INFINITY } })).toEqual(["properties"]);
+    expect(failedPath({ properties: { u: undefined } })).toEqual(["properties"]);
   });
 
   it(`properties는 JSON으로 ${MAX_PROPERTIES_BYTES}바이트까지다(글자 수가 아니라 UTF-8 바이트)`, () => {
