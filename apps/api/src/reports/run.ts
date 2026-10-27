@@ -1,7 +1,7 @@
 import { MAX_REPORT_ROWS, type ReportQuery, type ReportResult } from "@event-analytics/shared";
 import type pg from "pg";
 import { RETENTION_DAYS } from "../db/partitions.js";
-import { buildBucketsSql, buildReportSql, END, START, toReportBuckets, toReportRows } from "./sql.js";
+import { buildBucketsSql, buildReportSql, buildRollupMetaSql, END, reportSource, START, toReportBuckets, toReportRows } from "./sql.js";
 
 // 리포트를 돌린다(DESIGN 6.3, 10장 35). 읽기 전용 트랜잭션에서 문장 30초, 잠금 대기 3초로 묶는다(트랜잭션 안에서만).
 
@@ -16,12 +16,13 @@ export class ReportFailed extends Error {
 }
 
 // asOf: 보관 기간과 provisional을 판단할 "지금"(ISO). 테스트가 실제 날짜와 상관없이 같은 결과를 보게 넘긴다. 없으면 DB의 now()다.
-export type ReportOptions = { maxRows?: number; statementTimeout?: string; lockTimeout?: string; asOf?: string };
+// forceRaw: 집계 표를 쓸 수 있어도 원본으로 센다(테스트가 두 경로를 견줄 때).
+export type ReportOptions = { maxRows?: number; statementTimeout?: string; lockTimeout?: string; asOf?: string; forceRaw?: boolean };
 
 export async function runReport(
   pool: pg.Pool,
   q: ReportQuery,
-  { maxRows = MAX_REPORT_ROWS, statementTimeout = "30s", lockTimeout = "3s", asOf }: ReportOptions = {},
+  { maxRows = MAX_REPORT_ROWS, statementTimeout = "30s", lockTimeout = "3s", asOf, forceRaw = false }: ReportOptions = {},
 ): Promise<ReportResult> {
   let client: pg.PoolClient;
   try {
@@ -30,7 +31,8 @@ export async function runReport(
     throw new ReportFailed("busy", "DB 연결을 얻지 못했습니다. 잠시 뒤 다시 하세요", { cause: err });
   }
   try {
-    await client.query("begin read only");
+    // 반복 읽기: 행·묶음·워터마크·stale을 한 스냅샷에서 본다.
+    await client.query("begin read only isolation level repeatable read");
     await client.query("select set_config('statement_timeout', $1, true), set_config('lock_timeout', $2, true)", [
       statementTimeout,
       lockTimeout,
@@ -48,10 +50,19 @@ export async function runReport(
       throw new ReportFailed("out_of_retention", `보관 기간(90일) 밖입니다. 기간의 시작은 ${retainedFrom.toISOString()} 이후여야 합니다`);
     }
     // 잘라 주지 않는다(잘린 표를 전체로 오해하지 않게). 하나 더 읽어 넘는지 본다.
-    const { text, values } = buildReportSql(q, maxRows + 1);
+    const source = forceRaw ? "raw" : reportSource(q);
+    const { text, values } = buildReportSql(q, maxRows + 1, source);
     const { rows } = await client.query(text, values);
     if (rows.length > maxRows) {
       throw new ReportFailed("too_many_rows", `행이 ${maxRows}개를 넘습니다. 기간이나 차원을 줄이세요`);
+    }
+    let rollupWatermark: string | null = null;
+    let stale = false;
+    if (source === "rollup") {
+      const meta = buildRollupMetaSql(q);
+      const r = (await client.query<{ watermark: Date; stale: boolean }>(meta.text, meta.values)).rows[0]!;
+      rollupWatermark = r.watermark.toISOString();
+      stale = r.stale;
     }
     const buckets = buildBucketsSql(q);
     const bucketRows = (await client.query(buckets.text, buckets.values)).rows;
@@ -63,7 +74,9 @@ export async function runReport(
         rangeStart: from.toISOString(),
         rangeEnd: to.toISOString(),
         rowCount: rows.length,
-        source: "raw",
+        source,
+        rollupWatermark,
+        stale,
         provisional,
         buckets: toReportBuckets(q, bucketRows),
       },

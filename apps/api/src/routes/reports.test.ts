@@ -55,6 +55,9 @@ beforeAll(async () => {
         [from, to],
       );
     }
+    // 집계 작업은 돌리지 않는다. 워터마크를 고정 데이터보다 앞에 두어, 이벤트만 묻는 리포트도 집계 표가 비고 원본 꼬리가 모두 센다
+    // (마이그레이션은 실제 오늘 기준으로 넣으므로 날짜가 지나면 결과가 달라지지 않게 고정한다).
+    await owner.query("update rollup_state set watermark = '2026-01-01 00:00+00'");
   } finally {
     await owner.end();
   }
@@ -86,6 +89,8 @@ describe("A5 — 한국 시각과 UTC의 하루", () => {
         rangeEnd: "2026-10-27T15:00:00.000Z",
         rowCount: 1,
         source: "raw",
+        rollupWatermark: null,
+        stale: false,
         provisional: true,
         buckets: [{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", utcOffset: "+09:00", partial: false }],
       },
@@ -290,6 +295,8 @@ describe("설정과 실패", () => {
       (n.Plans as (typeof n)[] | undefined)?.forEach(walk);
     };
     walk(rows[0]["QUERY PLAN"][0].Plan);
-    expect([...names].sort()).toEqual(["events_p20261026", "events_p20261027"]);
+    // 이벤트만 묻는 리포트라 집계 표 경로다(집계 표와 상태 표도 읽는다). 원본 파티션은 그 둘만이다.
+    expect([...names].filter((n) => n.startsWith("events_p")).sort()).toEqual(["events_p20261026", "events_p20261027"]);
+    expect(names.has("hourly_rollup")).toBe(true);
   });
 });
