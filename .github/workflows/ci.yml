@@ -50,6 +50,7 @@ jobs:
             apps/api/src/db/events.test.ts \
             apps/api/src/db/migrate.test.ts \
             apps/api/src/db/roles.test.ts \
+            apps/api/src/routes/ingest.test.ts \
             apps/api/test/global-setup.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
       # 로컬과 같게 슈퍼유저가 아닌 role 둘(소유자, 앱)과, 정렬을 OS에 맡기지 않는 DB를 만든다(README 로컬 준비, DESIGN 10장 13).

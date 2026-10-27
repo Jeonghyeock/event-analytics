@@ -5,13 +5,17 @@ import { createPool } from "./db/pool.js";
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL이 없습니다(.env 또는 환경 변수)");
 
+// 수집 API의 쓰기 키(DESIGN 10장 21). 짧은 키는 받지 않는다.
+const ingestWriteKey = process.env.INGEST_WRITE_KEY ?? "";
+if (ingestWriteKey.length < 32) throw new Error("INGEST_WRITE_KEY가 없거나 32자보다 짧습니다(.env 또는 환경 변수)");
+
 // seat-booking(3001)과 함께 띄울 수 있게 기본값을 3002로 둔다.
 const port = Number(process.env.PORT ?? 3002);
 const host = process.env.HOST ?? "127.0.0.1";
 
 // 연결을 받기까지 5초를 넘기면 실패한다. 한도가 없으면 DB에 닿지 않을 때 /health가 503 대신 멈춰 있다.
 const pool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-api", connectionTimeoutMillis: 5_000 });
-const app = buildApp(pool, { logger: true });
+const app = buildApp(pool, { logger: true }, { ingestWriteKey });
 app.addHook("onClose", () => pool.end());
 
 const shutdown = () => {

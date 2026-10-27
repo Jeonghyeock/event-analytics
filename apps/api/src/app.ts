@@ -1,10 +1,13 @@
+import { randomBytes } from "node:crypto";
 import { HealthResponse, HealthUnavailable } from "@event-analytics/shared";
 import Fastify, { type FastifyError, type FastifyServerOptions } from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import type pg from "pg";
+import { ingestRoutes } from "./routes/ingest.js";
 
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
-export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
+// ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
+export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}, services: { ingestWriteKey?: string } = {}) {
   const app = Fastify(options).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -36,6 +39,8 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
       }
     },
   );
+
+  app.register(ingestRoutes, { pool, writeKey: services.ingestWriteKey ?? randomBytes(32).toString("hex") });
 
   return app;
 }
