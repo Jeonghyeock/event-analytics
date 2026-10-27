@@ -33,10 +33,12 @@ GRANT event_analytics_app TO event_analytics;
 ```sh
 npm ci
 npm run db:migrate -w @event-analytics/api   # 마이그레이션(apps/api/drizzle/)
-npm run db:partitions -w @event-analytics/api # 오늘(UTC) 기준 ±7일의 일 파티션(없는 날만)
+npm run db:maintain -w @event-analytics/api   # 파티션 관리: 오늘(UTC) ±7일 만들기, 90일 지난 날 떼고 지우기
 npm test                                     # 템플릿 DB를 복제한 테스트 DB에서 돌고, 끝나면 지운다
 npm run dev                                  # API: http://127.0.0.1:3002
 ```
+
+`db:maintain`은 하루 한 번 돌린다(cron, Windows 작업 스케줄러). 앞으로 7일치를 미리 만들므로 며칠 멈춰도 수집은 계속된다. 서버는 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고 로그를 남긴다.
 
 ## API
 
