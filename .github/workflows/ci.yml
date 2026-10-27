@@ -41,6 +41,7 @@ jobs:
           expected="$(printf '%s\n' \
             apps/api/src/db/maintain-cli.ts \
             apps/api/src/db/migrate-cli.ts \
+            apps/api/src/load/detach-rehearsal-cli.ts \
             apps/api/src/load/generate-cli.ts \
             apps/api/test/global-setup.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }

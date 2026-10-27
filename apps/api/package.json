@@ -10,6 +10,7 @@
     "db:maintain": "tsx --env-file-if-exists=../../.env src/db/maintain-cli.ts",
     "test": "vitest run",
     "load:generate": "tsx --env-file-if-exists=../../.env src/load/generate-cli.ts",
+    "load:detach-rehearsal": "tsx --env-file-if-exists=../../.env src/load/detach-rehearsal-cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
