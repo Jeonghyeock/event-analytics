@@ -8,6 +8,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate-cli.ts",
     "db:maintain": "tsx --env-file-if-exists=../../.env src/db/maintain-cli.ts",
+    "rollup:run": "tsx --env-file-if-exists=../../.env src/rollup-cli.ts",
     "test": "vitest run",
     "load:generate": "tsx --env-file-if-exists=../../.env src/load/generate-cli.ts",
     "load:detach-rehearsal": "tsx --env-file-if-exists=../../.env src/load/detach-rehearsal-cli.ts",
