@@ -15,9 +15,17 @@ describe("서버 설정", () => {
     });
   });
 
-  it("틀린 값은 뜨지 않게 거절한다", () => {
-    expect(() => loadServerConfig({ REPORT_POOL_MAX: "0" })).toThrow(/REPORT_POOL_MAX/);
+  it("틀린 값은 뜨지 않게 거절한다. 수는 숫자 글자만 받는다(16진수·지수·공백·빈 값 아님)", () => {
+    for (const value of ["0", "열", "0x10", "1e1", " 10 ", "", "2.5", "101"]) {
+      expect(() => loadServerConfig({ REPORT_POOL_MAX: value }), value).toThrow(/REPORT_POOL_MAX/);
+    }
     expect(() => loadServerConfig({ DB_POOL_MAX: "열" })).toThrow(/DB_POOL_MAX/);
     expect(() => loadServerConfig({ LOG_LEVEL: "loud" })).toThrow(/LOG_LEVEL/);
+  });
+
+  it("1초 지표 폴더가 빈 값이나 공백이면 끈다. 로그 수준 silent도 받는다", () => {
+    expect(loadServerConfig({ LOAD_STATS: "" }).loadStatsDir).toBeNull();
+    expect(loadServerConfig({ LOAD_STATS: "   " }).loadStatsDir).toBeNull();
+    expect(loadServerConfig({ LOG_LEVEL: "silent" }).logLevel).toBe("silent");
   });
 });

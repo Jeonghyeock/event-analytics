@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
+import type { FastifyBaseLogger } from "fastify";
 import pg from "pg";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { freshDatabase } from "../test/fresh-database.js";
 import { createDailyPartitions } from "./db/partitions.js";
 import { createPool } from "./db/pool.js";
 import { insertEvents } from "./ingest.js";
 import { generate } from "./load/generate.js";
-import { runRollup } from "./rollup.js";
+import { runRollup, startRollupLoop } from "./rollup.js";
 
 // 집계 작업(DESIGN 6.4, 합격 기준 A5·A6). 테스트마다 새 DB에 생성기 데이터를 넣고, "지금"을 정해 돌린다.
 const now = "2026-10-27T12:30:00Z";
@@ -178,5 +179,27 @@ describe("집계 작업", () => {
     expect(await diff(pool, "2026-10-27T12:00:00Z")).toBe(0);
     const left = await pool.query("select (select count(*) from hourly_rollup where hour < '2026-07-29') ::int as rollup, (select count(*) from dirty_hours)::int as dirty");
     expect(left.rows).toEqual([{ rollup: 0, dirty: 0 }]);
+  });
+});
+
+describe("집계 작업 루프", () => {
+  // 로그는 버린다
+  const quiet = { info() {}, error() {}, warn() {}, debug() {}, trace() {}, fatal() {}, child: () => quiet, level: "silent", silent() {} } as unknown as FastifyBaseLogger;
+
+  it("한 바퀴가 끝날 때마다, 실패한 바퀴도 onRound로 알린다(부하 측정의 1초 지표)", async () => {
+    const { pool } = await setup();
+    const rounds: unknown[] = [];
+    const stop = startRollupLoop(pool, quiet, 3_600_000, (result, ms) => rounds.push({ result, ms }));
+    await vi.waitFor(() => expect(rounds).toHaveLength(1), { timeout: 30_000 });
+    await stop();
+    expect(rounds[0]).toMatchObject({ result: { skipped: false }, ms: expect.any(Number) });
+
+    const down = createPool({ connectionString: "postgres://nobody:nothing@127.0.0.1:1/none", connectionTimeoutMillis: 500 });
+    onTestFinished(() => down.end());
+    const failed: unknown[] = [];
+    const stopDown = startRollupLoop(down, quiet, 3_600_000, (result, ms) => failed.push({ result, ms }));
+    await vi.waitFor(() => expect(failed).toHaveLength(1), { timeout: 10_000 });
+    await stopDown();
+    expect(failed[0]).toMatchObject({ result: { failed: true }, ms: expect.any(Number) });
   });
 });

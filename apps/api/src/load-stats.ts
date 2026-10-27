@@ -50,7 +50,9 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
   let routes = new Map<string, RouteWindow>();
   const poolWindows = new Map<string, PoolWindow>();
   const emptyPoolWindow = (): PoolWindow => ({ connectWaits: [], connectErrors: 0, newConnections: 0 });
-  let rollupRounds: (RollupResult & { ms: number })[] = [];
+  let rollupRounds: ((RollupResult | { failed: true }) & { ms: number })[] = [];
+  // onSend에서 읽은 본문의 code를 onResponse가 상태와 함께 센다(끊긴 요청은 상태도 code도 세지 않고 aborted로만 센다)
+  const replyCodes = new WeakMap<FastifyRequest, string>();
   let gcMs = 0;
   let gcCount = 0;
   const routeWindow = (key: string) => {
@@ -112,11 +114,14 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
   let timer: NodeJS.Timeout | undefined;
 
   // 지난 줄 뒤의 값을 한 줄로 쓰고 비운다. 누적 값(CPU, ELU)은 지난 줄과의 차이를 쓴다.
+  // 기준점은 처음에 한 번 잡아 다음 줄의 기준으로도 쓴다(쓰는 데 든 시간이 어느 줄에서도 빠지지 않게).
   function flush() {
     const now = performance.now();
+    const eluNow = performance.eventLoopUtilization();
+    const cpuNow = process.cpuUsage();
     const elapsedMs = now - lastAt;
-    const elu = performance.eventLoopUtilization(lastElu);
-    const cpu = process.cpuUsage(lastCpu);
+    const elu = performance.eventLoopUtilization(eluNow, lastElu);
+    const cpu = { user: cpuNow.user - lastCpu.user, system: cpuNow.system - lastCpu.system };
     const line = {
       type: "tick",
       at: new Date().toISOString(),
@@ -166,8 +171,8 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
     appendFileSync(statsFile, `${JSON.stringify(line)}\n`);
 
     lastAt = now;
-    lastElu = performance.eventLoopUtilization();
-    lastCpu = process.cpuUsage();
+    lastElu = eluNow;
+    lastCpu = cpuNow;
     routes = new Map();
     for (const name of poolWindows.keys()) poolWindows.set(name, emptyPoolWindow());
     rollupRounds = [];
@@ -177,20 +182,24 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
   }
 
   return {
-    // 집계 작업 한 바퀴(startRollupLoop의 onRound). 리포트와 겨루는지 보려고 그 시각과 걸린 시간을 남긴다.
-    recordRollup: (result: RollupResult, ms: number) => {
+    // 집계 작업 한 바퀴(startRollupLoop의 onRound). 리포트와 겨루는지 보려고 그 시각과 걸린 시간을 남긴다. 실패한 바퀴도 남긴다.
+    recordRollup: (result: RollupResult | { failed: true }, ms: number) => {
       rollupRounds.push({ ...result, ms: round(ms) });
     },
     // 앱이 준비되기 전에 부른다. 클라이언트가 응답 전에 끊은 요청(k6의 시간 한도)은 onResponse가 불리지 않으므로
     // aborted로 따로 센다. 가장 느린 요청이 처리 시간에서 빠지므로, aborted가 있으면 그 경로의 p95는 실제보다 작다.
+    // 끊김은 응답 소켓의 close로 가린다: Fastify의 onRequestAbort는 본문을 다 읽은 POST(재는 경로 모두)에서는 불리지 않는다(코드 리뷰).
     attach(app: FastifyInstance) {
+      app.addHook("onRequest", (request, reply, done) => {
+        reply.raw.once("close", () => {
+          if (!reply.raw.writableFinished) routeWindow(routeKey(request)).aborted++;
+        });
+        done();
+      });
       app.addHook("onSend", (request, reply, payload, done) => {
         if (reply.statusCode >= 400) {
           const code = replyCode(payload);
-          if (code) {
-            const codes = routeWindow(routeKey(request)).codes;
-            codes[code] = (codes[code] ?? 0) + 1;
-          }
+          if (code) replyCodes.set(request, code);
         }
         done(null, payload);
       });
@@ -198,10 +207,8 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
         const window = routeWindow(routeKey(request));
         window.times.push(reply.elapsedTime);
         window.statuses[reply.statusCode] = (window.statuses[reply.statusCode] ?? 0) + 1;
-        done();
-      });
-      app.addHook("onRequestAbort", (request, done) => {
-        routeWindow(routeKey(request)).aborted++;
+        const code = replyCodes.get(request);
+        if (code) window.codes[code] = (window.codes[code] ?? 0) + 1;
         done();
       });
     },

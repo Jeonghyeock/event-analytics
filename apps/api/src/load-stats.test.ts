@@ -94,9 +94,11 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
   it("집계 작업 한 바퀴를 쓰고, 다음 줄은 지난 줄 뒤의 값만 쓴다", async () => {
     stats.recordRollup({ skipped: false, chunks: 1, hours: 3, watermark: "2026-10-27T12:00:00.000Z" }, 12.345);
     stats.recordRollup({ skipped: true }, 1);
+    stats.recordRollup({ failed: true }, 60_000);
     expect(lastLine().rollup).toEqual([
       { skipped: false, chunks: 1, hours: 3, watermark: "2026-10-27T12:00:00.000Z", ms: 12.35 },
       { skipped: true, ms: 1 },
+      { failed: true, ms: 60_000 },
     ]);
     await app.inject("/health");
     lastLine();
@@ -124,25 +126,41 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
     expect(idle.heapMb).toBeGreaterThan(0);
   });
 
-  it("클라이언트가 응답 전에 끊은 요청은 aborted로 센다", async () => {
+  it("클라이언트가 응답 전에 끊은 요청은 본문이 있는 POST도 aborted로 센다(상태와 code는 세지 않는다)", async () => {
     // 끊으려면 실제 소켓이 있어야 해서, 느린 경로를 더한 앱을 따로 만들어 임의 포트로 띄운다.
+    // Fastify의 onRequestAbort는 본문을 다 읽은 POST에서는 불리지 않는다(재는 경로가 모두 그렇다, 코드 리뷰).
     const slowDir = mkdtempSync(path.join(tmpdir(), "load-stats-slow-"));
     const slowPool = createPool({ connectionString: inject("databaseUrl") });
     const slowStats = createLoadStats({ dir: slowDir, pools: { ingest: slowPool }, config, intervalMs: 3_600_000 });
     const slow = buildApp(slowPool);
+    const wait = () => new Promise((r) => setTimeout(r, 500));
     slow.get("/test/slow", async () => {
-      await new Promise((r) => setTimeout(r, 300));
+      await wait();
       return { ok: true };
+    });
+    // 끊긴 뒤에 503을 보내도(리포트의 시간 한도) code만 남지 않는다
+    slow.post("/test/slow", async (_request, reply) => {
+      await wait();
+      return reply.code(503).send({ error: "시간 한도", code: "report_timeout" });
     });
     slowStats.attach(slow);
     try {
       const address = await slow.listen({ port: 0, host: "127.0.0.1" });
-      await fetch(`${address}/test/slow`, { signal: AbortSignal.timeout(50) }).catch(() => undefined);
-      await new Promise((r) => setTimeout(r, 400));
+      await fetch(`${address}/test/slow`, { signal: AbortSignal.timeout(100) }).catch(() => undefined);
+      await fetch(`${address}/test/slow`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ any: "body" }),
+        signal: AbortSignal.timeout(100),
+      }).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 700));
+      // 끊기지 않은 요청은 aborted가 아니다
+      await fetch(`${address}/test/slow`);
       slowStats.flush();
       const tick = readFileSync(path.join(slowDir, "api-stats.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).at(-1);
-      expect(tick.routes["GET /test/slow"]).toMatchObject({ aborted: 1 });
-      expect(tick.routes["GET /test/slow"].statuses).toEqual({});
+      expect(tick.routes["GET /test/slow"]).toMatchObject({ aborted: 1, statuses: { 200: 1 } });
+      expect(tick.routes["POST /test/slow"]).toMatchObject({ aborted: 1, statuses: {} });
+      expect(tick.routes["POST /test/slow"].codes).toBeUndefined();
     } finally {
       await slow.close();
       await slowPool.end();

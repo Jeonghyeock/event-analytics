@@ -122,23 +122,24 @@ async function recompute(client: pg.PoolClient, from: Date, to: Date, late: Date
 
 // API 서버 안의 타이머(1분). setInterval이 아니라 끝난 뒤 다음을 건다(한 프로세스 안에서 실행 둘이 섞이지 않게).
 // 돌려준 함수는 멈추고, 진행 중인 실행이 끝나길 기다린다(풀을 닫기 전에).
-// onRound: 한 바퀴가 끝날 때마다(부하 측정의 1초 지표가 집계 작업이 리포트와 겨루는지 보려고 쓴다)
+// onRound: 한 바퀴가 끝날 때마다, 실패한 바퀴도(부하 측정의 1초 지표가 집계 작업이 리포트와 겨루는지 보려고 쓴다)
 export function startRollupLoop(
   pool: pg.Pool,
   log: FastifyBaseLogger,
   everyMs = 60_000,
-  onRound?: (result: RollupResult, ms: number) => void,
+  onRound?: (result: RollupResult | { failed: true }, ms: number) => void,
 ) {
   let timer: NodeJS.Timeout | undefined;
   let stopped = false;
   let running: Promise<void> = Promise.resolve();
   const tick = async () => {
+    const started = performance.now();
     try {
-      const started = performance.now();
       const result = await runRollup(pool);
       onRound?.(result, performance.now() - started);
       if (!result.skipped && result.hours > 0) log.info(result, "집계 작업");
     } catch (err) {
+      onRound?.({ failed: true }, performance.now() - started);
       log.error({ err }, "집계 작업 실패");
     } finally {
       if (!stopped) schedule(everyMs);
