@@ -1,6 +1,6 @@
 import { ReportQuery, type ReportResult } from "@event-analytics/shared";
 import { describe, expect, it } from "vitest";
-import { assignColors, bucketStates, buildChartData, buildTable, niceTicks, OTHER_KEY, seriesKey, seriesLabel } from "./series";
+import { assignColors, axisLabels, bucketStates, buildChartData, buildTable, type ChartBucket, niceTicks, OTHER_KEY, seriesKey, seriesLabel } from "./series";
 
 // 리포트 응답 → 그래프와 표(DESIGN 6.7, 10장 51·53).
 const q = (patch: Record<string, unknown> = {}) =>
@@ -180,5 +180,33 @@ describe("niceTicks", () => {
     expect(niceTicks(2)).toEqual([0, 1, 2]);
     expect(niceTicks(1)).toEqual([0, 1]);
     expect(niceTicks(0)).toEqual([0, 1]);
+  });
+});
+
+describe("axisLabels", () => {
+  const hours = (days: string[], hoursPerDay = 24): ChartBucket[] =>
+    days.flatMap((d) =>
+      Array.from({ length: hoursPerDay }, (_, h) => ({
+        bucket: `${d}T${String(h).padStart(2, "0")}:00:00.000Z`,
+        label: `${d} ${String(h).padStart(2, "0")}:00`,
+        state: "done" as const,
+        partial: false,
+      })),
+    );
+
+  it("시간 단위가 여러 날이면 자정에만 날짜를 적는다(연도를 뗌)", () => {
+    expect(axisLabels(hours(["2026-10-20", "2026-10-21", "2026-10-22"]), 1000).map((l) => l.text)).toEqual(["10-20", "10-21", "10-22"]);
+  });
+
+  it("시간 단위가 하루뿐이면 시각만 적고, 좁으면 건너뛴다", () => {
+    const labels = axisLabels(hours(["2026-10-20"]), 300);
+    expect(labels[0]).toEqual({ index: 0, text: "00:00" });
+    expect(labels.length).toBeLessThan(24);
+  });
+
+  it("해를 넘기면 연도를 둔다, 같은 label이 둘인 묶음(두 01:00)은 적지 않는다", () => {
+    const days = (labels: string[]): ChartBucket[] => labels.map((label, i) => ({ bucket: String(i), label, state: "done", partial: false }));
+    expect(axisLabels(days(["2026-12-31", "2027-01-01"]), 1000).map((l) => l.text)).toEqual(["2026-12-31", "2027-01-01"]);
+    expect(axisLabels(days(["2026-11-01 00:00", "2026-11-01 01:00 (-04:00)", "2026-11-01 01:00 (-05:00)"]), 1000).map((l) => l.text)).toEqual(["00:00"]);
   });
 });

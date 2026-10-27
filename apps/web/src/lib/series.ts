@@ -183,3 +183,30 @@ export function niceTicks(max: number, count = 4): number[] {
   for (let v = 0; v < max + step; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return ticks;
 }
+
+// x축 글자(글자 다듬기만, 날짜 계산이 아니다). 글자를 짧게 하고, 겹치지 않을 만큼만 고른다.
+// - 기간이 한 해 안이면 연도를 뗀다.
+// - 시간 단위: 하루뿐이면 시각만, 여러 날이면 자정(00:00) 묶음에만 날짜를 적는다(같은 간격의 날 경계).
+// - 같은 label이 둘인 묶음(두 01:00)은 축에 적지 않는다(툴팁과 표가 오프셋으로 가린다).
+export function axisLabels(buckets: readonly ChartBucket[], plotWidth: number): { index: number; text: string }[] {
+  const n = buckets.length;
+  if (n === 0) return [];
+  const sameYear = buckets[0]!.label.slice(0, 4) === buckets[n - 1]!.label.slice(0, 4);
+  // 첫 묶음이 두 01:00의 하나면 뒤에 오프셋이 붙으므로 앞부분만 본다
+  const hourly = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(buckets[0]!.label);
+  const sameDay = buckets.every((b) => b.label.slice(0, 10) === buckets[0]!.label.slice(0, 10));
+  const short = (label: string) => {
+    if (hourly && sameDay) return label.slice(11);
+    if (hourly) return sameYear ? label.slice(5, 10) : label.slice(0, 10);
+    return sameYear && /^\d{4}-/.test(label) ? label.slice(5) : label;
+  };
+  let candidates = buckets.map((b, index) => ({ index, b })).filter(({ b }) => !b.label.includes("("));
+  if (hourly && !sameDay) candidates = candidates.filter(({ b }) => b.label.endsWith(" 00:00"));
+  if (candidates.length === 0) return [];
+  // 글자 하나 7px쯤 + 여백. 묶음 사이가 그보다 좁으면 건너뛴다.
+  const labelWidth = Math.max(...candidates.map(({ b }) => short(b.label).length)) * 7 + 16;
+  const gap = n === 1 ? plotWidth : plotWidth / (n - 1);
+  const spacing = candidates.length > 1 ? (candidates[1]!.index - candidates[0]!.index) * gap : plotWidth;
+  const step = Math.max(1, Math.ceil(labelWidth / spacing));
+  return candidates.filter((_, i) => i % step === 0).map(({ index, b }) => ({ index, text: short(b.label) }));
+}

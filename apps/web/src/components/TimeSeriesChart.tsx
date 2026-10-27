@@ -1,8 +1,10 @@
-import { useState } from "react";
-import { type ChartBucket, formatCompact, formatCount, niceTicks } from "../lib/series";
+import { useRef, useState } from "react";
+import { axisLabels, type ChartBucket, formatCompact, formatCount, niceTicks } from "../lib/series";
+import { useWidth } from "../lib/useWidth";
 import styles from "./Chart.module.css";
 
 // 시간 계열 선 그래프(DESIGN 6.7, 10장 50). 손으로 쓴 SVG다.
+// - 실제 너비로 1:1로 그린다(글자 크기가 화면 너비에 따라 바뀌지 않게).
 // - x축은 묶음 순서로 같은 간격이다(23·25시간인 날도 한 칸).
 // - 아직 오지 않은 묶음(null)은 그리지 않는다. 진행 중이거나 일부만 찬 묶음으로 이어지는 선은 점선이다(덜 센 값).
 // - 십자선이 가장 가까운 묶음에 붙고, 툴팁이 그 묶음의 모든 계열 값을 보인다. 키보드로는 왼쪽·오른쪽 화살표다.
@@ -10,16 +12,16 @@ import styles from "./Chart.module.css";
 
 export type LineSeries = { key: string; label: string; color: string; values: (number | null)[] };
 
-const W = 800;
 const H = 260;
-const M = { top: 12, right: 16, bottom: 36, left: 56 };
-const PLOT_W = W - M.left - M.right;
+const M = { top: 12, right: 24, bottom: 32, left: 56 };
 const PLOT_H = H - M.top - M.bottom;
-const MAX_X_LABELS = 8;
 
 const describe = (b: ChartBucket) => `${b.label}${b.state === "current" ? " · 진행 중" : ""}${b.partial ? " · 일부" : ""}`;
 
 export function TimeSeriesChart({ title, buckets, series }: { title: string; buckets: ChartBucket[]; series: LineSeries[] }) {
+  const plotRef = useRef<HTMLDivElement>(null);
+  const W = useWidth(plotRef);
+  const PLOT_W = Math.max(1, W - M.left - M.right);
   const [hoverState, setHover] = useState<number | null>(null);
   // 키보드로 옮길 때만 화면 읽기 프로그램에 읽힌다(마우스로 움직일 때마다 읽히지 않게)
   const [announce, setAnnounce] = useState("");
@@ -32,11 +34,7 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
   const top = ticks.at(-1)!;
   const y = (v: number) => M.top + PLOT_H * (1 - v / top);
   const dashed = (i: number) => buckets[i]!.state === "current" || buckets[i]!.partial;
-  const step = Math.ceil(n / MAX_X_LABELS);
   const lastKnown = Math.max(0, buckets.findLastIndex((b) => b.state !== "future"));
-  // 글자 줄이기(날짜 계산이 아니다): 기간이 한 해 안이면 연도를 뗀다("2026-10-27 13:00" → "10-27 13:00")
-  const sameYear = n > 0 && buckets[0]!.label.slice(0, 4) === buckets[n - 1]!.label.slice(0, 4);
-  const shortLabel = (label: string) => (sameYear && /^\d{4}-/.test(label) ? label.slice(5) : label);
 
   const paths = series.map((s) => {
     let solid = "";
@@ -89,6 +87,7 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
         </ul>
       )}
       <div
+        ref={plotRef}
         className={styles.plot}
         tabIndex={0}
         role="group"
@@ -105,7 +104,7 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
           e.preventDefault();
         }}
       >
-        <svg viewBox={`0 0 ${W} ${H}`} className={styles.svg} aria-hidden="true">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className={styles.svg} aria-hidden="true">
           {ticks.map((t) => (
             <g key={t}>
               <line x1={M.left} x2={W - M.right} y1={y(t)} y2={y(t)} className={styles.grid} />
@@ -114,20 +113,11 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
               </text>
             </g>
           ))}
-          {buckets.map((b, i) =>
-            i % step === 0 ? (
-              <text
-                key={b.bucket}
-                x={x(i)}
-                y={H - M.bottom + 18}
-                className={styles.xTick}
-                // 양 끝 글자는 안쪽으로 붙여 영역 밖으로 나가지 않게
-                textAnchor={n > 1 && i === 0 ? "start" : n > 1 && i === n - 1 ? "end" : "middle"}
-              >
-                {shortLabel(b.label)}
-              </text>
-            ) : null,
-          )}
+          {axisLabels(buckets, PLOT_W).map(({ index, text }) => (
+            <text key={buckets[index]!.bucket} x={x(index)} y={H - M.bottom + 18} className={styles.xTick} textAnchor="middle">
+              {text}
+            </text>
+          ))}
           {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={M.top} y2={M.top + PLOT_H} className={styles.crosshair} />}
           {paths.map(({ s, solid, dash, end }) => (
             <g key={s.key}>
