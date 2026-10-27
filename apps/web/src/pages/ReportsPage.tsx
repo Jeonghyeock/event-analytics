@@ -2,9 +2,12 @@ import type { Metric, ReportQuery, ReportResult } from "@event-analytics/shared"
 import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { runReport } from "../api/endpoints";
+import { type OpenedReport, savedErrorHint } from "../api/saved";
 import { BarChart } from "../components/BarChart";
 import { ReportForm } from "../components/ReportForm";
 import { ReportTable } from "../components/ReportTable";
+import { SaveControls } from "../components/SaveControls";
+import { SavedGate } from "../components/SavedGate";
 import { LoadError, Loading } from "../components/States";
 import { TimeSeriesChart } from "../components/TimeSeriesChart";
 import { defaultReportForm } from "../lib/form";
@@ -13,7 +16,16 @@ import styles from "./ReportsPage.module.css";
 
 // 리포트 화면(DESIGN 6.7): 설정 → 그래프와 표. 다시 셀 때는 앞의 결과를 흐리게 둔다(자리가 튀지 않게).
 export function ReportsPage() {
-  const [query, setQuery] = useState<ReportQuery | null>(null);
+  return (
+    <SavedGate kind="report" title="리포트">
+      {(opened) => <ReportScreen opened={opened} />}
+    </SavedGate>
+  );
+}
+
+// 저장한 리포트를 열었으면 그 설정으로 양식을 채우고 바로 센다
+function ReportScreen({ opened }: { opened: OpenedReport<"report"> | null }) {
+  const [query, setQuery] = useState<ReportQuery | null>(opened?.config ?? null);
   // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다. stale을 본 뒤 다시 세는 길, 코드 리뷰).
   const submit = (q: ReportQuery) => {
     if (query !== null && hashKey(["report", q]) === hashKey(["report", query])) void report.refetch();
@@ -26,19 +38,21 @@ export function ReportsPage() {
     queryFn: async () => ({ query: query!, result: await runReport(query!) }),
     placeholderData: keepPreviousData,
   });
-  const [initial] = useState(defaultReportForm);
+  const [initial] = useState(() => opened?.config ?? defaultReportForm());
+  // 저장하는 것은 지금 보이는 결과의 설정이다
+  const shown = report.isSuccess && !report.isPlaceholderData ? report.data.query : null;
 
   return (
     <>
-      <h1>리포트</h1>
       <ReportForm initial={initial} onSubmit={submit} />
+      <SaveControls kind="report" opened={opened} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={report.isFetching}>
         {query === null ? (
           <p className={styles.muted}>설정을 고르고 "보기"를 누르세요.</p>
         ) : report.isPending ? (
           <Loading />
         ) : report.isError ? (
-          <LoadError error={report.error} onRetry={() => void report.refetch()} />
+          <LoadError error={report.error} onRetry={() => void report.refetch()} hint={savedErrorHint(opened, report.error)} />
         ) : (
           <div className={report.isPlaceholderData ? styles.stale : undefined}>
             <ReportView query={report.data.query} result={report.data.result} />

@@ -1,6 +1,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "../api/queries";
 import { RetentionPage } from "./RetentionPage";
@@ -31,6 +32,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init: RequestInit) => {
+      if (url === "/api/saved-reports") return new Response(JSON.stringify({ items: [] }));
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       if (url === "/api/reports/query") {
         // 이벤트 이름 목록
@@ -59,7 +61,9 @@ afterEach(() => vi.useRealTimers());
 function renderPage() {
   render(
     <QueryClientProvider client={createQueryClient()}>
-      <RetentionPage />
+      <MemoryRouter initialEntries={["/retention"]}>
+        <RetentionPage />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }

@@ -39,13 +39,36 @@
   background: var(--color-surface-raised);
 }
 
-/* 그래프와 긴 표가 들어가므로 seat-booking보다 넓다. */
+/* 그래프와 긴 표가 들어가므로 seat-booking보다 넓다. 왼쪽은 저장한 리포트 목록이다. */
+.columns {
+  flex: 1;
+  display: flex;
+  width: 100%;
+  max-width: 96rem;
+  margin: 0 auto;
+}
+
+.aside {
+  flex: 0 0 14rem;
+  padding: var(--space-5) 0 var(--space-5) var(--space-5);
+}
+
+/* 그래프가 실제 너비로 그려지므로 내용이 넓어도 늘어나지 않게(min-width: 0) */
 .main {
   flex: 1;
-  width: 100%;
-  max-width: 80rem;
-  margin: 0 auto;
+  min-width: 0;
   padding: var(--space-5);
+}
+
+@media (max-width: 64rem) {
+  .columns {
+    flex-direction: column;
+  }
+
+  .aside {
+    flex: none;
+    padding: var(--space-4) var(--space-5) 0;
+  }
 }
 
 @media (max-width: 40rem) {
@@ -56,6 +79,10 @@
 
   .main {
     padding: var(--space-4);
+  }
+
+  .aside {
+    padding: var(--space-3) var(--space-4) 0;
   }
 }
 

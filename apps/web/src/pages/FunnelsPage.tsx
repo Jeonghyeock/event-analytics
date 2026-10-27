@@ -2,8 +2,11 @@ import type { FunnelQuery, FunnelResult } from "@event-analytics/shared";
 import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { runFunnel } from "../api/endpoints";
+import { type OpenedReport, savedErrorHint } from "../api/saved";
 import { BarChart } from "../components/BarChart";
 import { defaultFunnelForm, FunnelFormView } from "../components/FunnelForm";
+import { SaveControls } from "../components/SaveControls";
+import { SavedGate } from "../components/SavedGate";
 import { LoadError, Loading } from "../components/States";
 import { DIMENSION_LABELS } from "../lib/form";
 import { formatRate, stepViews, totalCounts, windowLabel, windowOpen } from "../lib/funnel";
@@ -13,7 +16,15 @@ import styles from "./ReportsPage.module.css";
 
 // 퍼널 화면(DESIGN 6.5, 6.7): 단계별 사용자 수와 전환율. 전환율은 화면이 나눈다.
 export function FunnelsPage() {
-  const [query, setQuery] = useState<FunnelQuery | null>(null);
+  return (
+    <SavedGate kind="funnel" title="퍼널">
+      {(opened) => <FunnelScreen opened={opened} />}
+    </SavedGate>
+  );
+}
+
+function FunnelScreen({ opened }: { opened: OpenedReport<"funnel"> | null }) {
+  const [query, setQuery] = useState<FunnelQuery | null>(opened?.config ?? null);
   // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다)
   const submit = (q: FunnelQuery) => {
     if (query !== null && hashKey(["funnel", q]) === hashKey(["funnel", query])) void funnel.refetch();
@@ -25,19 +36,20 @@ export function FunnelsPage() {
     queryFn: async () => ({ query: query!, result: await runFunnel(query!) }),
     placeholderData: keepPreviousData,
   });
-  const [initial] = useState(defaultFunnelForm);
+  const [initial] = useState(() => opened?.config ?? defaultFunnelForm());
+  const shown = funnel.isSuccess && !funnel.isPlaceholderData ? funnel.data.query : null;
 
   return (
     <>
-      <h1>퍼널</h1>
       <FunnelFormView initial={initial} onSubmit={submit} />
+      <SaveControls kind="funnel" opened={opened} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={funnel.isFetching}>
         {query === null ? (
           <p className={styles.muted}>단계를 고르고 "보기"를 누르세요.</p>
         ) : funnel.isPending ? (
           <Loading />
         ) : funnel.isError ? (
-          <LoadError error={funnel.error} onRetry={() => void funnel.refetch()} />
+          <LoadError error={funnel.error} onRetry={() => void funnel.refetch()} hint={savedErrorHint(opened, funnel.error)} />
         ) : (
           <div className={funnel.isPlaceholderData ? styles.stale : undefined}>
             <FunnelView query={funnel.data.query} result={funnel.data.result} />

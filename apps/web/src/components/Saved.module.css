@@ -1,0 +1,129 @@
+/* 저장한 리포트(DESIGN 6.7): 저장 줄, 열 수 없는 설정, 왼쪽 목록 */
+.save {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.save input {
+  font: inherit;
+  min-width: 12rem;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.hint {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+}
+
+.hint:empty {
+  display: none;
+}
+
+.dirty {
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-sm);
+  color: var(--color-warning);
+  font-size: var(--font-sm);
+}
+
+.confirm {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.danger {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+  font-weight: 600;
+}
+
+.notice {
+  margin: 0 0 var(--space-3);
+  font-size: var(--font-sm);
+}
+
+.invalid {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.invalid p {
+  margin: 0;
+}
+
+.config {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: var(--font-sm);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.list h2 {
+  margin: 0;
+  font-size: var(--font-sm);
+  color: var(--color-text-muted);
+}
+
+.list ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.list a {
+  display: block;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.list a[aria-current="page"] {
+  background: var(--color-surface-raised);
+  font-weight: 600;
+}
+
+.kind {
+  display: block;
+  font-size: var(--font-sm);
+  font-weight: 400;
+  color: var(--color-text-muted);
+}
+
+/* 좁은 화면에서는 본문 위에 가로로 늘어놓는다 */
+@media (max-width: 64rem) {
+  .list ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+
+  .list a {
+    border: 1px solid var(--color-border);
+  }
+}
