@@ -8,12 +8,11 @@ export function Layout() {
   const location = useLocation();
 
   // 화면이 바뀌면 새 화면의 제목(없으면 본문)으로 포커스를 옮긴다(화면 읽기 프로그램이 새 화면을 처음부터 읽게). 첫 화면은 그대로 둔다.
-  const firstPath = useRef(true);
+  // 보인 경로를 기억해 경로가 실제로 바뀔 때만 옮긴다(StrictMode가 effect를 두 번 돌려도 첫 화면에서 옮기지 않게, 코드 리뷰).
+  const shownPath = useRef(location.pathname);
   useEffect(() => {
-    if (firstPath.current) {
-      firstPath.current = false;
-      return;
-    }
+    if (shownPath.current === location.pathname) return;
+    shownPath.current = location.pathname;
     const heading = main.current?.querySelector("h1");
     if (heading) {
       heading.setAttribute("tabindex", "-1");
@@ -26,7 +25,7 @@ export function Layout() {
   return (
     <div className={styles.shell}>
       <header className={styles.header}>
-        <Link to="/" className={styles.brand}>
+        <Link to="/reports" className={styles.brand}>
           이벤트 분석
         </Link>
         <nav aria-label="주 메뉴" className={styles.nav}>
