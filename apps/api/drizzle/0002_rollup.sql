@@ -16,9 +16,9 @@ CREATE TABLE "hourly_rollup" (
 --> statement-breakpoint
 CREATE TABLE "rollup_state" (
 	"id" boolean PRIMARY KEY DEFAULT true NOT NULL,
-	"watermark" timestamp with time zone,
+	"watermark" timestamp with time zone NOT NULL,
 	CONSTRAINT "rollup_state_one_row" CHECK ("rollup_state"."id")
 );
 --> statement-breakpoint
--- 집계 작업의 상태는 늘 한 행이다(아직 돌지 않았으면 watermark가 null).
-INSERT INTO "rollup_state" ("id", "watermark") VALUES (true, null);
+-- 집계 작업의 상태는 늘 한 행이다. 워터마크는 보관 기간의 시작(UTC 날짜로 90일 전 0시)에서 시작해, 첫 실행이 보관 기간 안의 데이터를 모두 센다.
+INSERT INTO "rollup_state" ("id", "watermark") VALUES (true, (date_trunc('day', now() at time zone 'UTC') - interval '90 days') at time zone 'UTC');

@@ -1,5 +1,5 @@
 {
-  "id": "a8b6b50e-9628-4cf5-81ab-2e9a11085f38",
+  "id": "9d71d8ce-cded-4830-81e1-35cbc8708c01",
   "prevId": "ffa83a1c-3d95-4897-bbd0-f1379ef6f185",
   "version": "7",
   "dialect": "postgresql",
@@ -106,7 +106,7 @@
           "name": "watermark",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         }
       },
       "indexes": {},
