@@ -11,6 +11,7 @@
     "test": "vitest run",
     "load:generate": "tsx --env-file-if-exists=../../.env src/load/generate-cli.ts",
     "load:detach-rehearsal": "tsx --env-file-if-exists=../../.env src/load/detach-rehearsal-cli.ts",
+    "load:report-bench": "tsx --env-file-if-exists=../../.env src/load/report-bench-cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
