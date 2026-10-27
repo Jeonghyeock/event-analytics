@@ -51,16 +51,32 @@ export function FunnelsPage() {
 function FunnelView({ query, result }: { query: FunnelQuery; result: FunnelResult }) {
   const views = stepViews(query.steps, totalCounts(result, query.steps.length));
   const breakdown = query.breakdown[0];
-  return (
+  // 큰 값이 위에 오게 진입 수 내림차순(같으면 서버 순서). 캠페인처럼 값이 많을 때 묻히지 않게.
+  const rows = result.rows.toSorted((a, b) => (b.steps[0] ?? 0) - (a.steps[0] ?? 0));
+  const header = (
     <>
       <p className={styles.explain}>
-        <strong>첫 진입 기준 전환</strong>: 기간 안 첫 1단계부터 {windowLabel(query.windowMinutes)} 안에 끝낸 사용자만 셉니다. 같은 기간의 "결제한
-        사용자" 리포트보다 작거나 다를 수 있습니다. 필터는 모든 단계에, 나눔은 진입(1단계) 이벤트에 겁니다.
+        <strong>첫 진입 기준 전환</strong>: 기간 안 첫 1단계부터 {windowLabel(query.windowMinutes)} 안에 끝낸 사용자만 셉니다. 같은 기간의 "
+        {query.steps.at(-1)}" 사용자 수 리포트보다 작거나 다를 수 있습니다. 필터는 모든 단계에, 나눔은 진입(1단계) 이벤트에 겁니다.
       </p>
       <ul className={styles.badges}>
         {windowOpen(result.meta) && <li>전환 기간이 아직 끝나지 않은 진입이 있음(더 늘 수 있음)</li>}
-        {result.meta.provisional && <li>최근 7일이 들어 있어 늦은 이벤트가 더 올 수 있음</li>}
+        {/* provisional은 전환 기간의 끝(windowEnd) 기준이다(고른 기간이 아니라) */}
+        {result.meta.provisional && <li>전환 기간까지 읽는 구간이 최근 7일에 걸쳐 늦은 이벤트가 더 올 수 있음</li>}
       </ul>
+    </>
+  );
+  if (views[0]!.users === 0) {
+    return (
+      <>
+        {header}
+        <p className={styles.muted}>이 기간에 1단계(진입)가 없습니다. 기간이나 필터를 확인하세요.</p>
+      </>
+    );
+  }
+  return (
+    <>
+      {header}
       <BarChart
         title="단계별 사용자 수"
         bars={views.map((v, i) => ({
@@ -95,7 +111,8 @@ function FunnelView({ query, result }: { query: FunnelQuery; result: FunnelResul
                   {i + 1}. {v.name}
                 </th>
                 <td className={tableStyles.number}>{formatCount(v.users)}</td>
-                <td className={tableStyles.number}>{formatRate(v.fromPrevious)}</td>
+                {/* 1단계는 앞 단계가 없어 비운다("—"는 0/0이다) */}
+                <td className={tableStyles.number}>{i === 0 ? "" : formatRate(v.fromPrevious)}</td>
                 <td className={tableStyles.number}>{formatRate(v.fromFirst)}</td>
               </tr>
             ))}
@@ -115,12 +132,12 @@ function FunnelView({ query, result }: { query: FunnelQuery; result: FunnelResul
                   </th>
                 ))}
                 <th scope="col" className={tableStyles.number}>
-                  끝까지
+                  끝까지 전환율
                 </th>
               </tr>
             </thead>
             <tbody>
-              {result.rows.map((r) => {
+              {rows.map((r) => {
                 const value = r.dimensions[breakdown] ?? null;
                 return (
                   <tr key={value ?? "\u0000none"}>
