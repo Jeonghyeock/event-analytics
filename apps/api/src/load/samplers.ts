@@ -65,7 +65,10 @@ export async function startActivitySampler(url: string, outFile: string, interva
 }
 
 // 측정 앞뒤로 찍는 누적 통계. 뒤에서 앞을 빼서 본다. 파티션은 events_*로 묶는다.
-// 다른 DB의 xact_commit은 같은 서버를 다른 일이 썼는지 본다(그 회차는 무효, DESIGN 6.8 "무효 조건").
+// 다른 DB의 xact_commit은 같은 서버를 다른 일이 썼는지 본다(그 회차는 무효, DESIGN 6.8 "무효 조건"). DB마다 찍는다:
+// 합으로 보면 측정 중에 지워진 DB(테스트의 정리)의 커밋이 빠져 차이가 음수가 되고 검사를 지나친다(코드 리뷰).
+// 이 PC는 autovacuum이 사용자 표를 처리하지 않아 쉴 때 다른 DB의 커밋이 0이다. 서버가 고쳐지면 autovacuum 작업자의 트랜잭션도 여기 잡히므로
+// 그때는 클라이언트 백엔드만 세는 값(sessions, active_time)으로 바꾼다.
 export async function snapshotStats(url: string) {
   const client = new pg.Client({ connectionString: url, application_name: "event-analytics-load-runner" });
   await client.connect();
@@ -86,8 +89,8 @@ export async function snapshotStats(url: string) {
               blks_hit::float8, blks_read::float8
          from pg_stat_database where datname = current_database()`,
     );
-    const others = await client.query(
-      `select coalesce(sum(xact_commit), 0)::float8 as xact_commit from pg_stat_database
+    const others = await client.query<{ datname: string; xact_commit: number }>(
+      `select datname, xact_commit::float8 as xact_commit from pg_stat_database
         where datname is not null and datname <> current_database()`,
     );
     const wal = await client.query("select wal_records::float8, wal_fpi::float8, wal_bytes::float8 from pg_stat_wal");
@@ -100,7 +103,7 @@ export async function snapshotStats(url: string) {
       at: new Date().toISOString(),
       tables: tables.rows as Record<string, number | string>[],
       database: database.rows[0] as Record<string, number>,
-      otherCommits: Number(others.rows[0]!.xact_commit),
+      otherCommits: Object.fromEntries(others.rows.map((r) => [r.datname, Number(r.xact_commit)])) as Record<string, number>,
       wal: wal.rows[0] as Record<string, number>,
       checkpointer: checkpointer.rows[0] as Record<string, number>,
       progress: progress.rows[0] as { vacuums: number; analyzes: number },

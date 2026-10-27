@@ -26,15 +26,17 @@ const random = rng(SEED * 7919 + __VU);
 export function ingest() {
   const iter = __ITER;
   const now = Date.now();
+  // 지금의 시각 글자는 배치마다 한 번만 만든다(99%가 같다)
+  const nowIso = new Date(now).toISOString();
   const events = new Array(BATCH);
   for (let i = 0; i < BATCH; i++) {
     const late = random() < LATE_SHARE;
-    const at = late ? now - Math.floor(random() * LATE_MAX_MS) : now;
+    const occurredAt = late ? new Date(now - Math.floor(random() * LATE_MAX_MS)).toISOString() : nowIso;
     const user = Math.floor(200_000 * random() ** 3);
     const campaign = Math.floor(CAMPAIGNS * random() ** 4);
     events[i] = {
       eventId: eventId(__VU, iter, i),
-      occurredAt: new Date(at).toISOString(),
+      occurredAt,
       userId: `u${user}`,
       eventName: EVENTS[Math.floor(random() * EVENTS.length)],
       platform: PLATFORMS[Math.floor(random() * PLATFORMS.length)],

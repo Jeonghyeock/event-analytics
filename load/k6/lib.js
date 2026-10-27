@@ -17,13 +17,13 @@ export function rng(seed) {
 }
 
 // 32비트 해시(FNV-1a의 변형). event_id의 앞 8글자를 흩어 인덱스의 무작위 자리에 가게 한다(v4와 같은 분포).
+// 배열 없이 풀어 쓴다(이벤트마다 부르므로 k6 CPU를 아낀다)
+function mix32(h, x) {
+  h = Math.imul(h ^ (x & 0xffff), 0x01000193);
+  return Math.imul(h ^ (x >>> 16), 0x01000193);
+}
 function hash32(a, b, c, d) {
-  let h = 0x811c9dc5 ^ SEED;
-  for (const x of [a, b, c, d]) {
-    h = Math.imul(h ^ (x & 0xffff), 0x01000193);
-    h = Math.imul(h ^ (x >>> 16), 0x01000193);
-  }
-  return h >>> 0;
+  return mix32(mix32(mix32(mix32(0x811c9dc5 ^ SEED, a), b), c), d) >>> 0;
 }
 const hex = (n, width) => (n >>> 0).toString(16).padStart(width, "0").slice(-width);
 const RUN_TAG = hex(Math.imul(SEED, 0x9e3779b1), 8);
