@@ -8,7 +8,7 @@
 
 ## 스택
 
-TypeScript · Fastify · PostgreSQL 18 · zod · Vitest
+TypeScript · Fastify · PostgreSQL 18 · zod · Vitest · React · TanStack Query · Vite
 
 ## 로컬 실행
 
@@ -37,6 +37,7 @@ npm run db:maintain -w @event-analytics/api   # 파티션 관리: 오늘(UTC) ±
 npm run rollup:run -w @event-analytics/api     # 시간 집계 표 채우기(서버는 1분마다 스스로 돈다)
 npm test                                     # 템플릿 DB를 복제한 테스트 DB에서 돌고, 끝나면 지운다
 npm run dev                                  # API: http://127.0.0.1:3002
+npm run dev -w @event-analytics/web           # 화면: http://localhost:5180(/api를 API로 넘긴다)
 ```
 
 `db:maintain`은 하루 한 번 돌린다(cron, Windows 작업 스케줄러). 앞으로 7일치를 미리 만들므로 며칠 멈춰도 수집은 계속된다. 서버는 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고 로그를 남긴다.

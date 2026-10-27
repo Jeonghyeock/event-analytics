@@ -30,6 +30,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # 화면(apps/web)이 빌드되는지. 단위 테스트는 아래 npm test가 함께 돈다.
+      - run: npm run build -w @event-analytics/web
       # 소유자 주소는 마이그레이션·파티션 만들기와 테스트 준비만 읽는다(DESIGN 10장 12). 서버와 앱 코드는 앱 role(DML만)이다.
       - name: 소유자 주소를 쓰는 곳이 정해진 파일뿐인지
         # grep은 찾으면 0, 못 찾으면 1, 오류(경로가 없음 등)면 2다. 목록으로 견주어 검사가 조용히 꺼지지 않게 한다.
