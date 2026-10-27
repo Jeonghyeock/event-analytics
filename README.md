@@ -1,14 +1,14 @@
 # event-analytics
 
-마케터가 앱·웹의 행동 이벤트를 어떻게 볼지 설정해 그래프와 표로 보는 리포트 대시보드의 뒷단. 이벤트를 재전송에도 한 번만 저장하고, 리포트 설정(지표 × 차원 × 필터 × 기간 × 단위)을 안전한 SQL로 바꾸고, 수천만 건에서도 파티션과 시간 집계로 빠르게 답한다. PostgreSQL을 많은 데이터에서 운영하는 것이 목적이다.
+마케터가 앱·웹의 행동 이벤트를 어떻게 볼지 설정해 그래프와 표로 보는 리포트 대시보드. 이벤트를 재전송에도 한 번만 저장하고, 리포트 설정(지표 × 차원 × 필터 × 기간 × 단위)을 안전한 SQL로 바꾸고, 수천만 건에서도 파티션과 시간 집계로 빠르게 답한다. PostgreSQL을 많은 데이터에서 운영하는 것이 목적이고, 화면은 그 결과를 보는 최소한이다(리포트, 퍼널, 리텐션, 저장한 리포트).
 
-> 5단계(퍼널과 리텐션: 첫 진입 기준 전환, 날마다 무리, 손으로 센 값과 같음)까지 완료. 다음은 6단계(화면). 설계: [docs/DESIGN.md](docs/DESIGN.md) · 진행 기록: [docs/PROGRESS.md](docs/PROGRESS.md) · 측정 결과: [load/RESULTS.md](load/RESULTS.md)
+> 6단계(화면: 날짜는 서버가 정하고 화면은 펼치고 나누고 그린다, E2E가 손으로 센 값과 같음)까지 완료. 다음은 7단계(측정과 조정). 설계: [docs/DESIGN.md](docs/DESIGN.md) · 진행 기록: [docs/PROGRESS.md](docs/PROGRESS.md) · 측정 결과: [load/RESULTS.md](load/RESULTS.md)
 
 > Claude Code와 함께 만든다.
 
 ## 스택
 
-TypeScript · Fastify · PostgreSQL 18 · zod · Vitest · React · TanStack Query · Vite
+TypeScript · Fastify · PostgreSQL 18 · zod · Vitest · React · TanStack Query · Vite · Playwright
 
 ## 로컬 실행
 
