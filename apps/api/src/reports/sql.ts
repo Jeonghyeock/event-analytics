@@ -3,7 +3,7 @@ import type { Dimension, ReportBucket, ReportQuery, ReportRow } from "@event-ana
 // 리포트 설정 → SQL(DESIGN 6.3, 10장 31~35). SQL 글자에는 아래 상수 표의 식별자만 들어가고, 설정의 값은 모두 매개변수로 넘긴다.
 
 // 차원 이름 → 열 이름. 지금은 같지만, 설정의 글자가 SQL에 그대로 들어가지 않는다는 것을 이 표가 보장한다.
-const COLUMNS: Record<Dimension, string> = {
+export const COLUMNS: Record<Dimension, string> = {
   event_name: "event_name",
   platform: "platform",
   country: "country",
@@ -30,16 +30,11 @@ export const reportSource = (q: ReportQuery): ReportSource =>
 export const START = "($1::date::timestamp at time zone $3::text)";
 export const END = "(($2::date + 1)::timestamp at time zone $3::text)";
 
-// $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록. 열 이름은 상수 표에서만 온다(설정의 글자를 SQL에 넣지 않는다).
-// rollupWatermark: 있으면 집계 표 경로다(reportSource가 rollup일 때만 넘긴다). 리포트 트랜잭션(반복 읽기)에서 먼저 읽어
-// 매개변수로 넘긴다. 같은 문장의 서브쿼리로 읽으면 계획할 때 값을 몰라 가지를 치지 못한다(하루 리포트도 파티션 91개를 계획, 코드 리뷰).
-export function buildReportSql(q: ReportQuery, limit: number, rollupWatermark?: Date): ReportSql {
-  if (rollupWatermark && reportSource(q) !== "rollup") throw new Error("집계 표로 셀 수 없는 리포트입니다");
-  const values: unknown[] = [q.from, q.to, q.timezone];
-  // null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다). 집계 표에도 같은 열이 있다.
-  const filters: string[] = [];
-  for (const f of q.filters) {
-    const col = COLUMNS[f.dimension];
+// 필터 → 조건(모두 AND). 값 목록은 values에 넣고 매개변수 번호로 쓴다. 열 이름은 상수 표에서만 온다.
+// null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다). prefix는 조인에서 열 앞에 붙일 표 이름이다(예: "e.").
+export function filterConditions(filters: { dimension: Dimension; values: (string | null)[] }[], values: unknown[], prefix = ""): string[] {
+  return filters.map((f) => {
+    const col = `${prefix}${COLUMNS[f.dimension]}`;
     const present = f.values.filter((v) => v !== null);
     const conds: string[] = [];
     if (present.length > 0) {
@@ -47,8 +42,18 @@ export function buildReportSql(q: ReportQuery, limit: number, rollupWatermark?: 
       conds.push(`${col} = any($${values.length}::text[])`);
     }
     if (present.length < f.values.length) conds.push(`${col} is null`);
-    filters.push(conds.length === 1 ? conds[0]! : `(${conds.join(" or ")})`);
-  }
+    return conds.length === 1 ? conds[0]! : `(${conds.join(" or ")})`;
+  });
+}
+
+// $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록. 열 이름은 상수 표에서만 온다(설정의 글자를 SQL에 넣지 않는다).
+// rollupWatermark: 있으면 집계 표 경로다(reportSource가 rollup일 때만 넘긴다). 리포트 트랜잭션(반복 읽기)에서 먼저 읽어
+// 매개변수로 넘긴다. 같은 문장의 서브쿼리로 읽으면 계획할 때 값을 몰라 가지를 치지 못한다(하루 리포트도 파티션 91개를 계획, 코드 리뷰).
+export function buildReportSql(q: ReportQuery, limit: number, rollupWatermark?: Date): ReportSql {
+  if (rollupWatermark && reportSource(q) !== "rollup") throw new Error("집계 표로 셀 수 없는 리포트입니다");
+  const values: unknown[] = [q.from, q.to, q.timezone];
+  // 집계 표에도 같은 열이 있다.
+  const filters = filterConditions(q.filters, values);
   const bucketOf = (col: string) => (q.granularity === "total" ? START : `date_trunc('${UNITS[q.granularity]}', ${col}, $3::text)`);
   const dims = q.dimensions.map((d, i) => `${COLUMNS[d]} as d${i}`);
   const dimCols = q.dimensions.map((_, i) => `d${i}`);
