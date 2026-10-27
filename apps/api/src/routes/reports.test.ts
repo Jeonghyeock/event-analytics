@@ -1,10 +1,11 @@
-import type { ReportQuery } from "@event-analytics/shared";
+import { ReportQuery } from "@event-analytics/shared";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../../test/fresh-database.js";
 import { buildApp } from "../app.js";
 import { createDailyPartitions } from "../db/partitions.js";
 import { createPool } from "../db/pool.js";
+import { runReport } from "../reports/run.js";
 import { buildReportSql } from "../reports/sql.js";
 
 // 합격 기준 A5: 리포트 결과가 작은 고정 데이터에서 손으로 센 값과 같다(DESIGN 6.3). 이 파일만 쓰는 새 DB에 넣는다.
@@ -94,6 +95,7 @@ describe("A5 — 한국 시각과 UTC의 하루", () => {
         rollupWatermark: null,
         stale: false,
         provisional: true,
+        asOf: "2026-10-27T12:00:00.000Z",
         buckets: [{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", utcOffset: "+09:00", partial: false }],
       },
     });
@@ -211,6 +213,13 @@ describe("A5 — 시간대의 경계", () => {
 });
 
 describe("보관 기간과 늦은 이벤트", () => {
+  it("meta.asOf는 판단에 쓴 \"지금\"이다(넘기지 않으면 DB의 now())", async () => {
+    // 이 파일의 앱은 asOf를 넘긴다(위의 meta 비교). 넘기지 않으면 DB 시각이다.
+    const q = ReportQuery.parse({ metrics: ["events"], from: "2026-10-27", to: "2026-10-27", granularity: "day" });
+    const { meta } = await runReport(pool, q);
+    expect(Math.abs(Date.parse(meta.asOf) - Date.now())).toBeLessThan(60_000);
+  });
+
   it("시작이 보관 기간(07-29 0시 UTC)보다 앞서면 422 out_of_retention이다(한국 시각 07-29는 07-28 15시 UTC에 시작)", async () => {
     const res = await report({ from: "2026-07-29", to: "2026-08-05", granularity: "day", ...kst });
     expect(res).toEqual({ status: 422, body: { error: expect.any(String), code: "out_of_retention" } });

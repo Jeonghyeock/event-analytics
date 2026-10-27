@@ -19,14 +19,16 @@ export function runReport(
   return inReportTransaction(pool, limits, async (client) => {
     // 기간을 리포트 시간대로 바꾼 순간, 보관 기간의 시작(UTC 날짜로 90일 전 0시), 끝이 최근 7일 안인지(늦은 이벤트가 더 온다),
     // 집계 표의 워터마크. 워터마크는 여기서 읽어 리포트 문장에 매개변수로 넘긴다(반복 읽기라 같은 스냅샷이고, 계획할 때 가지를 친다).
-    const range = await client.query<{ from: Date; to: Date; retained_from: Date; provisional: boolean; watermark: Date | null }>(
+    // as_of: 판단에 쓴 "지금"(트랜잭션 안의 now()는 트랜잭션의 시작 시각이라 한 응답 안에서 같다). 화면이 진행 중인 묶음을 가린다.
+    const range = await client.query<{ from: Date; to: Date; retained_from: Date; provisional: boolean; as_of: Date; watermark: Date | null }>(
       `select ${START} as "from", ${END} as "to",
               ${retainedFromSql("$4", "$5")} as retained_from,
               ${END} > coalesce($4::timestamptz, now()) - interval '7 days' as provisional,
+              coalesce($4::timestamptz, now()) as as_of,
               (select watermark from rollup_state) as watermark`,
       [q.from, q.to, q.timezone, asOf ?? null, RETENTION_DAYS],
     );
-    const { from, to, retained_from: retainedFrom, provisional, watermark } = range.rows[0]!;
+    const { from, to, retained_from: retainedFrom, provisional, as_of: asOfInstant, watermark } = range.rows[0]!;
     checkRetention(from, retainedFrom);
     // 기간이 워터마크에서(또는 뒤에서) 시작하면 집계 표 부분이 비어 원본만 센다. 상태 행이 없으면(집계 작업이 오류를 남긴다) 원본으로 센다.
     const source = !forceRaw && watermark && watermark > from ? reportSource(q) : "raw";
@@ -34,7 +36,7 @@ export function runReport(
     const { text, values } = buildReportSql(q, maxRows + 1, source === "rollup" ? watermark! : undefined);
     const { rows } = await client.query(text, values);
     if (rows.length > maxRows) {
-      throw new ReportFailed("too_many_rows", `행이 ${maxRows}개를 넘습니다. 기간이나 차원을 줄이세요`);
+      throw new ReportFailed("too_many_rows", `행이 ${maxRows}개를 넘습니다. 기간이나 차원을 줄이거나, 단위를 넓히거나, 필터로 값을 고르세요`);
     }
     let rollupWatermark: string | null = null;
     let stale = false;
@@ -56,6 +58,7 @@ export function runReport(
         rollupWatermark,
         stale,
         provisional,
+        asOf: asOfInstant.toISOString(),
         buckets: toReportBuckets(q, bucketRows),
       },
     };
