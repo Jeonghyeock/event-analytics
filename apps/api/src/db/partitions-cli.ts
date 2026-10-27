@@ -10,6 +10,9 @@ const today = utcDay(new Date());
 const client = new pg.Client({ connectionString: url });
 await client.connect();
 try {
+  // CREATE TABLE … PARTITION OF는 부모 표를 통째로 잠근다. 오래 도는 리포트 뒤에서 기다리면 그 뒤에 수집이 줄을 선다.
+  // 그래서 1초만 기다리고 실패한다(다시 돌리면 된다, DESIGN 10장 24).
+  await client.query("set lock_timeout = '1s'");
   const created = await createDailyPartitions(client, addDays(today, -7), addDays(today, 7));
   console.log(created.length > 0 ? `파티션을 만들었습니다: ${created.join(", ")}` : "파티션이 이미 있습니다");
 } finally {

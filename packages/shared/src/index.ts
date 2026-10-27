@@ -40,12 +40,22 @@ const Properties = z
     `JSON으로 ${MAX_PROPERTIES_BYTES}바이트까지입니다`,
   );
 
+// 오프셋은 ±14:00까지(실제로 쓰이는 범위는 −12:00~+14:00). zod는 +23:59까지 받지만 PostgreSQL은 ±15:59를 넘으면 거절해(22009)
+// 배치 전체가 실패한다(DESIGN 10장 17).
+const MAX_OFFSET_MINUTES = 14 * 60;
+const offsetMinutes = (value: string) => {
+  const m = /([+-])(\d{2}):(\d{2})$/.exec(value);
+  return m ? Number(m[2]) * 60 + Number(m[3]) : 0;
+};
+
 // 모르는 필드는 거절한다(strict). 조용히 버리면 보내는 쪽의 오타(campain 등)가 데이터 손실이 된다.
 export const IngestEvent = z.strictObject({
   // UUID 버전은 묻지 않는다. PostgreSQL uuid가 받는 하이픈 형식이면 된다.
   eventId: z.guid(),
-  // 오프셋이 있어야 한다(Z, +09:00). 글자 그대로 DB에 넘긴다(DESIGN 10장 17).
-  occurredAt: z.iso.datetime({ offset: true }),
+  // 오프셋이 있어야 한다(Z, +09:00). 수집은 밀리초로 잘라 저장한다(DESIGN 10장 17).
+  occurredAt: z.iso
+    .datetime({ offset: true })
+    .refine((value) => offsetMinutes(value) <= MAX_OFFSET_MINUTES, "오프셋은 ±14:00까지입니다"),
   userId: Text(128),
   eventName: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "영문 소문자로 시작하고 소문자·숫자·밑줄로 64자까지입니다"),
   platform: z.enum(PLATFORMS),
