@@ -1,15 +1,19 @@
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { describe, expect, it } from "vitest";
+import { createQueryClient } from "../api/queries";
 import { routes } from "../router";
 
 // 틀과 경로(DESIGN 6.7): 첫 화면은 리포트이고, 주 메뉴가 현재 화면을 표시한다.
 const renderAt = (path: string) =>
   render(
     <StrictMode>
-      <RouterProvider router={createMemoryRouter(routes, { initialEntries: [path] })} />
+      <QueryClientProvider client={createQueryClient()}>
+        <RouterProvider router={createMemoryRouter(routes, { initialEntries: [path] })} />
+      </QueryClientProvider>
     </StrictMode>,
   );
 

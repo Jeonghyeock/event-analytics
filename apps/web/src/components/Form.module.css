@@ -1,0 +1,82 @@
+/* 설정 양식(DESIGN 6.7). 필터는 결과 위 한 묶음에 두고, 결과 전체가 같은 설정으로 다시 그려진다. */
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.row legend {
+  float: left;
+  margin-right: var(--space-2);
+  font-weight: 600;
+}
+
+.field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.form input,
+.form select {
+  font: inherit;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.filter {
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  max-height: 10rem;
+  overflow-y: auto;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.muted {
+  margin: var(--space-2) 0 0;
+  color: var(--color-text-muted);
+}
+
+.values .muted {
+  margin: 0;
+}
+
+.primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: 600;
+}
+
+.errors {
+  margin: 0;
+  padding-left: var(--space-5);
+  color: var(--color-danger);
+}
