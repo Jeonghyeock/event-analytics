@@ -6,7 +6,6 @@ import type { z } from "zod";
 // 중복은 기본 키 (event_id, occurred_at)와 ON CONFLICT DO NOTHING이 거른다. 같은 문장 안의 중복도 거른다.
 
 const DAY_MS = 86_400_000;
-// 받을 기간: 지금 − 7일 ≤ occurred_at ≤ 지금 + 1시간(경계는 받는다).
 const MAX_AGE_MS = 7 * DAY_MS;
 const MAX_AHEAD_MS = 60 * 60_000;
 
@@ -22,6 +21,17 @@ export class IngestUnavailable extends Error {
 }
 
 type Rejected = IngestResult["rejected"][number];
+
+// 받을 기간: 지금 − 7일 ≤ at ≤ 지금 + 1시간(경계는 받는다, DESIGN 6.1).
+export function outsideWindow(at: number, now: number): "too_old" | "too_far_in_future" | null {
+  if (at < now - MAX_AGE_MS) return "too_old";
+  if (at > now + MAX_AHEAD_MS) return "too_far_in_future";
+  return null;
+}
+const WINDOW_MESSAGES = {
+  too_old: "받을 기간(지금부터 7일 전까지)보다 앞입니다",
+  too_far_in_future: "받을 기간(지금부터 1시간 뒤까지)보다 뒤입니다",
+};
 type Row = IngestEvent & { at: number };
 
 // 어느 필드가 왜 틀렸는지(경로: 메시지). 모르는 필드는 경로가 비어 있어 메시지만 남는다.
@@ -80,13 +90,9 @@ export async function ingest(pool: pg.Pool, events: unknown[]): Promise<IngestRe
     const now = rows[0]!.now.getTime();
     const accepted: Row[] = [];
     for (const { index, row } of valid) {
-      if (row.at < now - MAX_AGE_MS) {
-        rejected.push({ index, reason: "too_old", message: "받을 기간(지금부터 7일 전까지)보다 앞입니다" });
-      } else if (row.at > now + MAX_AHEAD_MS) {
-        rejected.push({ index, reason: "too_far_in_future", message: "받을 기간(지금부터 1시간 뒤까지)보다 뒤입니다" });
-      } else {
-        accepted.push(row);
-      }
+      const reason = outsideWindow(row.at, now);
+      if (reason) rejected.push({ index, reason, message: WINDOW_MESSAGES[reason] });
+      else accepted.push(row);
     }
     let inserted = 0;
     if (accepted.length > 0) {
