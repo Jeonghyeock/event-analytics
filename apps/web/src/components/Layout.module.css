@@ -1,0 +1,66 @@
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.brand {
+  font-weight: 700;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.nav {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.nav a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.nav a[aria-current="page"] {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+}
+
+/* 그래프와 긴 표가 들어가므로 seat-booking보다 넓다. */
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 80rem;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+@media (max-width: 40rem) {
+  .header {
+    flex-wrap: wrap;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .main {
+    padding: var(--space-4);
+  }
+}
+
+/* 화면이 바뀔 때 옮겨 온 포커스(제목·본문)는 테두리를 그리지 않는다. 키보드로 옮긴 포커스는 그대로 보인다. */
+.main:focus,
+.main h1:focus {
+  outline: none;
+}
