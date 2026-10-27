@@ -6,10 +6,10 @@ import { createPool } from "../db/pool.js";
 import { runReport } from "../reports/run.js";
 import { buildReportSql } from "../reports/sql.js";
 
-// 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 4단계와 7단계의 "전"). API와 같은 길(runReport)로 개발 DB에서 센다.
-// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS)도 남긴다.
-// --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
-//   npm run load:report-bench -w @event-analytics/api -- --runs 3 --as-of 2026-10-27T12:00:00Z
+// 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 3·4·7단계 기록). API와 같은 길(runReport)로 개발 DB에서 센다.
+// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS)도
+// 남긴다(계획기의 어림을 보게 비용도 켠다). --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
+//   npm run load:report-bench -w @event-analytics/api -- --runs 3 --as-of 2026-10-27T12:00:00Z --explain [--raw]
 const { values } = parseArgs({
   options: {
     runs: { type: "string", default: "3" },
@@ -62,10 +62,10 @@ try {
     if (values.explain) {
       // runReport와 같은 SQL(집계 표 경로면 그때 읽은 워터마크로)
       const { text, values: params } = buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
-      const { rows } = await pool.query(`explain (analyze, buffers, costs off, timing off) ${text}`, params);
+      const { rows } = await pool.query(`explain (analyze, buffers, timing off) ${text}`, params);
       plan = rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
     }
-    const r = { name, source, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
+    const r = { name, source, watermark, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
     console.log(`${name}(${source}): 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
     results.push(r);
   }

@@ -16,7 +16,7 @@ export class ReportFailed extends Error {
 }
 
 // asOf: 보관 기간과 provisional을 판단할 "지금"(ISO). 테스트가 실제 날짜와 상관없이 같은 결과를 보게 넘긴다. 없으면 DB의 now()다.
-// forceRaw: 집계 표를 쓸 수 있어도 원본으로 센다(테스트가 두 경로를 견줄 때).
+// forceRaw: 집계 표를 쓸 수 있어도 원본으로 센다(테스트가 두 경로를 견줄 때, 측정 도구의 --raw).
 export type ReportOptions = { maxRows?: number; statementTimeout?: string; lockTimeout?: string; asOf?: string; forceRaw?: boolean };
 
 export async function runReport(
