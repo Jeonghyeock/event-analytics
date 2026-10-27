@@ -29,7 +29,6 @@ const runs = Number(values.runs);
 const asOf = values["as-of"];
 const forceRaw = values.raw;
 const kind = values.kind;
-if (!["reports", "funnels", "retention"].includes(kind)) throw new Error("--kind는 reports, funnels, retention 가운데 하나입니다");
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL이 없습니다(.env 또는 환경 변수)");
@@ -73,8 +72,8 @@ const RETENTIONS: Record<string, unknown> = {
   "무리 7일, 7일째까지, 선점 → 결제": { days: 7, startEvent: "seats_held", returnEvent: "payment_succeeded", from: "2026-10-13", to: "2026-10-19", ...kst },
 };
 
-// 한 번 돌리고, 계획을 볼 SQL(그 실행이 읽은 워터마크·windowEnd로)과 계획에 쓸 설정을 돌려준다.
-type Measured = { source: string; watermark: string | null; rowCount: number; sql: ReportSql; nestloopOff: boolean };
+// 한 번 돌리고, 계획을 볼 SQL을 만드는 함수(그 실행이 읽은 워터마크·windowEnd로, 잰 시간 밖에서 부름)와 계획에 쓸 설정을 돌려준다.
+type Measured = { source: string; watermark: string | null; rowCount: number; sql: () => ReportSql; nestloopOff: boolean };
 const options = { ...(asOf ? { asOf } : {}), statementTimeout: "120s" };
 const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise<Measured>]> = {
   reports: [
@@ -83,7 +82,7 @@ const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise
       const q = ReportQuery.parse(body);
       const result = await runReport(pool, q, { ...options, forceRaw });
       const watermark = result.meta.rollupWatermark;
-      const sql = buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
+      const sql = () => buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
       return { source: result.meta.source, watermark, rowCount: result.meta.rowCount, sql, nestloopOff: false };
     },
   ],
@@ -92,7 +91,7 @@ const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise
     async (body) => {
       const q = FunnelQuery.parse(body);
       const result = await runFunnel(pool, q, options);
-      const sql = buildFunnelSql(q, new Date(result.meta.windowEnd));
+      const sql = () => buildFunnelSql(q, new Date(result.meta.windowEnd));
       return { source: "funnel", watermark: null, rowCount: result.rows.length, sql, nestloopOff: true };
     },
   ],
@@ -101,7 +100,7 @@ const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise
     async (body) => {
       const q = RetentionQuery.parse(body);
       const result = await runRetention(pool, q, options);
-      return { source: "retention", watermark: null, rowCount: result.rows.length, sql: buildRetentionSql(q), nestloopOff: true };
+      return { source: "retention", watermark: null, rowCount: result.rows.length, sql: () => buildRetentionSql(q), nestloopOff: true };
     },
   ],
 };
@@ -110,6 +109,7 @@ const pool = createPool({ connectionString: url, max: 1, application_name: "even
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
 const results = [];
 try {
+  if (!Object.hasOwn(CASES, kind)) throw new Error(`--kind는 ${Object.keys(CASES).join(", ")} 가운데 하나입니다`);
   const [bodies, measure] = CASES[kind]!;
   for (const [name, body] of Object.entries(bodies)) {
     const times: number[] = [];
@@ -123,12 +123,13 @@ try {
     const { source, watermark, rowCount, sql, nestloopOff } = last!;
     let plan: string | undefined;
     if (values.explain) {
-      // 러너와 같은 설정으로(퍼널·리텐션은 트랜잭션 안에서 중첩 반복을 끈다)
+      // 러너처럼 퍼널·리텐션은 트랜잭션 안에서 중첩 반복을 끈다(계획을 바꾸는 설정은 이것뿐이다)
       const client = await pool.connect();
       try {
         await client.query("begin read only");
         if (nestloopOff) await client.query("select set_config('enable_nestloop', 'off', true)");
-        const { rows } = await client.query(`explain (analyze, buffers, timing off) ${sql.text}`, sql.values);
+        const { text, values: params } = sql();
+        const { rows } = await client.query(`explain (analyze, buffers, timing off) ${text}`, params);
         plan = rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
         await client.query("commit");
       } finally {
