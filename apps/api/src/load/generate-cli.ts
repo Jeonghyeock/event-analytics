@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import type { IngestEvent } from "@event-analytics/shared";
 import pg from "pg";
-import { addDays, createDailyPartitions, utcDay } from "../db/partitions.js";
+import { addDays, createDailyPartitions, dbToday, RETENTION_DAYS } from "../db/partitions.js";
 import { insertEvents } from "../ingest.js";
 import { generate } from "./generate.js";
 
@@ -22,7 +22,6 @@ const events = Number(values.events);
 const days = Number(values.days);
 const seed = Number(values.seed);
 const batch = Number(values.batch);
-const endDay = values["end-day"] ?? utcDay(new Date());
 for (const [name, n] of [["events", events], ["days", days], ["seed", seed], ["batch", batch]] as const) {
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`--${name}는 1 이상의 정수입니다`);
 }
@@ -33,7 +32,13 @@ const client = new pg.Client({ connectionString: url, application_name: "event-a
 client.on("error", () => {});
 await client.connect();
 try {
+  const today = await dbToday(client);
+  const endDay = values["end-day"] ?? today;
   const firstDay = addDays(endDay, -days);
+  // 보관 기간보다 앞선 날은 넣지 않는다. 관리 작업이 지울 날을 다시 만들게 된다(DESIGN 6.2).
+  if (firstDay < addDays(today, -RETENTION_DAYS)) {
+    throw new Error(`${firstDay}는 보관 기간(${RETENTION_DAYS}일)보다 앞섭니다. --days나 --end-day를 줄입니다`);
+  }
   const created = await createDailyPartitions(client, firstDay, addDays(endDay, -1));
   console.log(`파티션 ${created.length}개를 만들었습니다(${firstDay} ~ ${addDays(endDay, -1)})`);
 
