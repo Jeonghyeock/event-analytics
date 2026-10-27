@@ -49,3 +49,9 @@
   background: var(--color-surface-raised);
   font-weight: 600;
 }
+
+/* 퍼널·리텐션의 정의 설명(한두 줄) */
+.explain {
+  margin: 0;
+  font-size: var(--font-sm);
+}
