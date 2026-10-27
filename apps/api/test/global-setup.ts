@@ -8,6 +8,8 @@ import { addDays, createDailyPartitions, utcDay } from "../src/db/partitions.js"
 declare module "vitest" {
   export interface ProvidedContext {
     databaseUrl: string;
+    // 테스트 템플릿의 파티션을 만든 기준 날(UTC). 그 날 −8일 ~ +2일이 있다. 자정을 넘겨도 테스트가 같은 날을 쓰게 넘긴다.
+    partitionDay: string;
     isolatedDatabaseUrl: string;
     ownerDatabaseUrl: string;
   }
@@ -33,6 +35,7 @@ export default async function setup(project: TestProject) {
   const testDb = `event_analytics_test_${process.pid}`;
   // 표 전체를 훑어 바꾸는 작업(정리 작업)을 시험하는 파일만 쓰는 DB. 다른 테스트 파일이 동시에 만든 행을 건드리지 않게 따로 둔다.
   const isolatedDb = `${testDb}_isolated`;
+  const partitionDay = utcDay(new Date());
   await withAdminClient(baseUrl, async (client) => {
     // 잠근 동안 템플릿을 만들고 바로 복제하므로, 다른 실행이 끼어들어 템플릿을 지우거나 바꾸지 못한다.
     await client.query("SELECT pg_advisory_lock($1)", [SETUP_LOCK]);
@@ -40,7 +43,7 @@ export default async function setup(project: TestProject) {
       await client.query(`DROP DATABASE IF EXISTS ${TEMPLATE} WITH (FORCE)`);
       await client.query(`CREATE DATABASE ${TEMPLATE} ${NEW_DATABASE_OPTIONS}`);
       await runMigrations(withDatabase(baseUrl, TEMPLATE));
-      await createTestPartitions(withDatabase(baseUrl, TEMPLATE));
+      await createTestPartitions(withDatabase(baseUrl, TEMPLATE), partitionDay);
       // 강제 종료된 실행이 같은 pid로 남긴 DB가 있으면 지우고 만든다.
       for (const db of [testDb, isolatedDb]) {
         await client.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
@@ -50,6 +53,7 @@ export default async function setup(project: TestProject) {
       await client.query("SELECT pg_advisory_unlock($1)", [SETUP_LOCK]);
     }
   });
+  project.provide("partitionDay", partitionDay);
   project.provide("databaseUrl", withDatabase(appUrl, testDb));
   project.provide("isolatedDatabaseUrl", withDatabase(appUrl, isolatedDb));
   project.provide("ownerDatabaseUrl", withDatabase(baseUrl, testDb));
@@ -63,11 +67,10 @@ export default async function setup(project: TestProject) {
 
 // 수집 테스트는 지금 기준의 시각으로 이벤트를 만든다. 받을 기간(과거 7일, 미래 1시간)을 하루씩 넘게 덮는다.
 // 연결을 닫고 돌아온다(템플릿에 연결이 남으면 바로 뒤의 복제가 실패한다).
-async function createTestPartitions(url: string) {
+async function createTestPartitions(url: string, today: string) {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    const today = utcDay(new Date());
     await createDailyPartitions(client, addDays(today, -8), addDays(today, 2));
   } finally {
     await client.end();
