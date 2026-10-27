@@ -2,7 +2,7 @@
 
 마케터가 앱·웹의 행동 이벤트를 어떻게 볼지 설정해 그래프와 표로 보는 리포트 대시보드의 뒷단. 이벤트를 재전송에도 한 번만 저장하고, 리포트 설정(지표 × 차원 × 필터 × 기간 × 단위)을 안전한 SQL로 바꾸고, 수천만 건에서도 파티션과 시간 집계로 빠르게 답한다. PostgreSQL을 많은 데이터에서 운영하는 것이 목적이다.
 
-> 1단계(수집: 재전송·중복 배치에도 한 번만 저장, 받을 기간 밖은 이유와 함께 거절)까지 완료. 다음은 2단계(파티션 관리와 이벤트 생성기). 설계: [docs/DESIGN.md](docs/DESIGN.md) · 진행 기록: [docs/PROGRESS.md](docs/PROGRESS.md)
+> 2단계(파티션 관리: 수집을 막지 않고 만들고 떼기, 하루 리포트는 그날의 파티션만, 기본 데이터 1,000만 건)까지 완료. 다음은 3단계(리포트 설정 → SQL). 설계: [docs/DESIGN.md](docs/DESIGN.md) · 진행 기록: [docs/PROGRESS.md](docs/PROGRESS.md) · 측정 결과: [load/RESULTS.md](load/RESULTS.md)
 
 > Claude Code와 함께 만든다.
 
