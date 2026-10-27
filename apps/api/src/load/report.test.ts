@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { crossesUtcHour, type K6Event, percentile, runProblems, steadyWindow, summarizeKinds } from "./report.js";
+import { crossesUtcHour, diffStats, type K6Event, percentile, runProblems, steadyWindow, summarizeKinds, totalDropped } from "./report.js";
+import type { StatsSnapshot } from "./samplers.js";
 
 // 측정 요약(DESIGN 6.8 "지표", "판단 규칙"). 판단을 정하는 계산이라 손으로 센 값으로 지킨다.
 const report = (key: string, startedAt: number, ms: number, extra: Partial<Extract<K6Event, { ev: "report" }>> = {}): K6Event => ({
@@ -82,15 +83,75 @@ describe("종류별 요약과 기다린 시간의 몫", () => {
 });
 
 describe("무효 조건", () => {
-  it("버린 반복, k6 CPU, 다른 프로세스, 다른 DB의 커밋, 측정 DB의 vacuum·analyze", () => {
-    const base = { dropped: 0, k6PctMax: 100, k6Cores: 8, othersPctMean: 150, othersBaseline: 100, otherCommits: 0, vacuumOrAnalyze: 0 };
+  const base = {
+    dropped: 0,
+    k6PctMax: 100,
+    k6Cores: 8,
+    othersPctMean: 150,
+    othersBaseline: 60,
+    otherCommits: 0,
+    databasesChanged: [],
+    vacuumOrAnalyze: 0,
+  };
+
+  it("버린 반복, k6 CPU, 다른 프로세스, 다른 DB의 커밋·생기거나 사라진 DB, 측정 DB의 vacuum·analyze, 체크포인트, 짧은 정상 구간", () => {
     expect(runProblems(base)).toEqual([]);
-    expect(runProblems({ ...base, dropped: 3, k6PctMax: 720, othersPctMean: 300, otherCommits: 2, vacuumOrAnalyze: 1 })).toEqual([
+    expect(
+      runProblems({
+        ...base,
+        dropped: 3,
+        k6PctMax: 720,
+        othersPctMean: 300,
+        otherCommits: 2,
+        databasesChanged: ["-event_analytics_x_1"],
+        vacuumOrAnalyze: 1,
+        checkpoints: 1,
+        steady: { seconds: 1000, requested: 1200 },
+      }),
+    ).toEqual([
       "버린 반복 3",
       "k6 CPU 최대 720%(코어 8개)",
-      "다른 프로세스 CPU 평균 300%(측정 전 100%)",
+      "다른 프로세스 CPU 평균 300%(측정 전 60%)",
       "다른 DB의 커밋 2",
+      "측정 중에 생기거나 사라진 DB(-event_analytics_x_1)",
+      "체크포인트 1",
+      "정상 구간 1000초(요청 1200초)",
       "측정 DB에 vacuum·analyze 1",
     ]);
+  });
+
+  it("k6 요약이 없거나 CPU 기준선이 없거나 높으면 무효다(검사가 조용히 꺼지지 않게)", () => {
+    expect(runProblems({ ...base, dropped: null, othersBaseline: null })).toEqual(["k6 요약 없음", "CPU 기준선 표본 없음"]);
+    expect(runProblems({ ...base, othersBaseline: 180, othersPctMean: 200 })).toEqual([]);
+    expect(runProblems({ ...base, othersBaseline: 320, othersPctMean: 330 })).toEqual(["측정 전 다른 프로세스 CPU 320%"]);
+  });
+
+  it("다른 DB의 커밋은 DB마다 센다: 측정 중에 지워진 DB가 합을 음수로 만들어 검사를 지나치지 않게(코드 리뷰 재현)", () => {
+    const snapshot = (otherCommits: Record<string, number>) =>
+      ({
+        at: "",
+        tables: [],
+        database: {},
+        otherCommits,
+        wal: {},
+        checkpointer: { num_done: 0 },
+        progress: { vacuums: 0, analyzes: 0 },
+      }) as unknown as StatsSnapshot;
+    const diff = diffStats(snapshot({ postgres: 10, test_db: 200 }), snapshot({ postgres: 10 }));
+    expect(diff.otherCommits).toBe(0);
+    expect(diff.databasesChanged).toEqual(["-test_db"]);
+    expect(diffStats(snapshot({ postgres: 10 }), snapshot({ postgres: 13, fresh: 5 }))).toMatchObject({ otherCommits: 3, databasesChanged: ["+fresh"] });
+  });
+
+  it("버린 반복은 모든 시나리오(열린 모형의 리포트 포함)에서 더한다", () => {
+    const summary = {
+      metrics: {
+        "dropped_iterations{scenario:background}": { values: { count: 1 } },
+        "dropped_iterations{scenario:open_r6}": { values: { count: 2 } },
+        "http_reqs{scenario:background}": { values: { count: 99 } },
+      },
+    };
+    expect(totalDropped(summary)).toBe(3);
+    expect(totalDropped(null)).toBeNull();
   });
 });

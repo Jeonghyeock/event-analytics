@@ -4,7 +4,7 @@ export { reportsClosed, reportsOpen } from "./reports.js";
 // 부하 장면의 입구(DESIGN 6.8). 실행기(run-cli.ts)가 환경 변수로 무엇을 얼마나 돌릴지 정한다.
 // SCENE=s1:      수집만. INGEST_RATE(초당 배치) 하나를 INGEST_WARMUP_S 예열 뒤 INGEST_STEP_S 동안(단계마다 실행기가 새로 복제한다).
 // SCENE=s2:      배경 수집(BG_RATE 초당 배치) + 닫힌 모형 리포트(N명, REPORT_S초). 예열은 VU마다 묶음 한 바퀴다(reports.js).
-// SCENE=s2open:  배경 수집 + 열린 모형 리포트(OPEN_RATES "r1:6,r2:4,…" 분당 도착률, REPORT_S초).
+// SCENE=s2open:  배경 수집 + 열린 모형 리포트(OPEN_RATES "r1:6,r2:2.7,…" 분당 도착률, 소수 가능, REPORT_S초).
 
 const scene = __ENV.SCENE;
 const num = (name, fallback) => {
@@ -60,11 +60,12 @@ if (scene === "s1") {
       const [kind, perMinute] = pair.split(":");
       const rate = Number(perMinute);
       if (!kind || !(rate > 0)) throw new Error(`OPEN_RATES가 잘못됐습니다: ${pair}`);
+      // k6의 도착률은 정수라, 기준선 처리량(분당 2.7 같은 소수)을 시간당으로 바꿔 넘긴다(코드 리뷰)
       scenarios[`open_${kind}`] = {
         executor: "constant-arrival-rate",
         exec: "reportsOpen",
-        rate,
-        timeUnit: "1m",
+        rate: Math.round(rate * 60),
+        timeUnit: "1h",
         duration: `${reportSeconds}s`,
         preAllocatedVUs: 4,
         maxVUs: 40,

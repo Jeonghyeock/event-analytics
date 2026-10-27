@@ -93,7 +93,7 @@ export function summarizeKinds(events: K6Event[], window: Window, keys: string[]
       key,
       n: mine.length,
       ok: ok.length,
-      p50: round(percentile(ok.map((e) => e.ms), 50) ?? Number.NaN),
+      p50: ok.length > 0 ? round(percentile(ok.map((e) => e.ms), 50)!) : null,
       p95: p95 === null ? null : round(p95),
       overLimit: rate503 > LIMIT_SHARE,
       rate503: Math.round(rate503 * 1000) / 1000,
@@ -213,6 +213,14 @@ export function summarizeActivity(lines: ActivityLine[], window: Window) {
   return { seconds: rows.length, byKey: Object.fromEntries(average) };
 }
 
+// k6 요약의 모든 시나리오에서 버린 반복의 합(열린 모형의 리포트 시나리오도). 요약이 없으면 null.
+export function totalDropped(summary: { metrics: Record<string, { values: Record<string, number> }> } | null) {
+  if (!summary) return null;
+  return Object.entries(summary.metrics)
+    .filter(([name]) => name.startsWith("dropped_iterations{scenario:"))
+    .reduce((sum, [, metric]) => sum + (metric.values.count ?? 0), 0);
+}
+
 // k6 요약에서 시나리오 하나(수집)의 숫자. threshold를 건 하위 지표만 있다(main.js).
 export function summarizeIngest(summary: { metrics: Record<string, { values: Record<string, number> }> }, scenario: string, seconds: number) {
   const metric = (name: string) => summary.metrics[name]?.values;
@@ -260,29 +268,48 @@ export function diffStats(before: StatsSnapshot, after: StatsSnapshot) {
     database: diffRow(before.database, after.database),
     wal: diffRow(before.wal, after.wal),
     checkpoints: delta(before.checkpointer, after.checkpointer, "num_done"),
-    otherCommits: after.otherCommits - before.otherCommits,
+    // 앞뒤 모두에 있는 DB의 커밋 증가, 측정 중에 생기거나 사라진 DB
+    otherCommits: Object.entries(after.otherCommits).reduce((sum, [name, n]) => sum + Math.max(0, n - (before.otherCommits[name] ?? n)), 0),
+    databasesChanged: [
+      ...Object.keys(after.otherCommits).filter((name) => !(name in before.otherCommits)).map((name) => `+${name}`),
+      ...Object.keys(before.otherCommits).filter((name) => !(name in after.otherCommits)).map((name) => `-${name}`),
+    ],
     progressAtEnd: after.progress,
   };
 }
 
 // 회차·단계가 무효이거나 표시해야 하는 이유(DESIGN 6.8 "무효 조건", seat-booking의 phaseProblems).
+// dropped: 모든 시나리오의 버린 반복, k6 요약이 없으면 null. othersBaseline: k6를 띄우기 전 6초의 다른 프로세스 CPU, 표본이 없으면 null.
+// checkpoints: S1 단계 안의 체크포인트(S2는 20분이라 거의 늘 들어 개수만 적는다). steady: 정상 구간이 요청한 길이에 미치는지.
 export function runProblems(input: {
-  dropped: number;
+  dropped: number | null;
   k6PctMax: number | null;
   k6Cores: number;
   othersPctMean: number | null;
-  othersBaseline: number;
+  othersBaseline: number | null;
   otherCommits: number;
+  databasesChanged: string[];
   vacuumOrAnalyze: number;
+  checkpoints?: number;
+  steady?: { seconds: number; requested: number };
 }) {
   const problems: string[] = [];
-  if (input.dropped > 0) problems.push(`버린 반복 ${input.dropped}`);
+  if (input.dropped === null) problems.push("k6 요약 없음");
+  else if (input.dropped > 0) problems.push(`버린 반복 ${input.dropped}`);
+  // 이 PC는 쉴 때도 다른 프로세스가 코어 두 개쯤을 쓴다(seat-booking 6단계). 기준선이 코어 세 개를 넘으면 다른 일이 돈 것으로 본다.
+  if (input.othersBaseline === null) problems.push("CPU 기준선 표본 없음");
+  else if (input.othersBaseline > 300) problems.push(`측정 전 다른 프로세스 CPU ${input.othersBaseline}%`);
   if (input.k6PctMax !== null && input.k6PctMax >= 90 * input.k6Cores) problems.push(`k6 CPU 최대 ${input.k6PctMax}%(코어 ${input.k6Cores}개)`);
-  if (input.othersPctMean !== null && input.othersPctMean > input.othersBaseline + 100) {
+  if (input.othersPctMean !== null && input.othersBaseline !== null && input.othersPctMean > input.othersBaseline + 100) {
     problems.push(`다른 프로세스 CPU 평균 ${input.othersPctMean}%(측정 전 ${input.othersBaseline}%)`);
   }
   // 측정 중에 쓴 표본기·실행기의 짧은 트랜잭션은 이 DB 것이라 세지 않는다. 다른 DB의 커밋은 다른 일이 같은 서버를 쓴 것이다.
   if (input.otherCommits > 0) problems.push(`다른 DB의 커밋 ${input.otherCommits}`);
+  if (input.databasesChanged.length > 0) problems.push(`측정 중에 생기거나 사라진 DB(${input.databasesChanged.join(", ")})`);
+  if (input.checkpoints !== undefined && input.checkpoints > 0) problems.push(`체크포인트 ${input.checkpoints}`);
+  if (input.steady && input.steady.seconds < input.steady.requested * 0.95) {
+    problems.push(`정상 구간 ${Math.round(input.steady.seconds)}초(요청 ${input.steady.requested}초)`);
+  }
   if (input.vacuumOrAnalyze > 0) problems.push(`측정 DB에 vacuum·analyze ${input.vacuumOrAnalyze}`);
   return problems;
 }

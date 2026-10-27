@@ -756,7 +756,7 @@
 | 대기 | 뜻 |
 |---|---|
 | `IO:AioIoCompletion`, `IO:DataFileRead` | `shared_buffers` 밖의 읽기 |
-| `IO:BufFileRead`, `IO:BufFileWrite` | 임시 파일(정렬·해시가 넘침) |
+| `IO:BuffileRead`, `IO:BuffileWrite` | 임시 파일(정렬·해시가 넘침. PG18.6이 실제로 내는 이름) |
 | `IO:WalWrite`, `IO:WalSync` | 수집의 커밋 |
 | `IPC:ExecuteGather` 등 | 병렬 리더가 작업자를 기다림 |
 | `Lock:*`(`pg_blocking_pids()`와 함께) | 잠금 |
@@ -776,7 +776,7 @@
 | 부모 표의 통계 | 부모를 가로지르는 계획의 어림이 크게 틀리고, 복제에서 `ANALYZE ONLY events` 전후로 계획이 바뀜 | 관리 작업(소유자)에서 `ANALYZE ONLY events` | 앱의 빈틈 |
 | 오늘·어제 파티션의 통계 | 그 파티션 스캔 노드의 어림이 10배 넘게 틀리고, 복제에서 그 파티션 `ANALYZE` 전후로 계획이 바뀜 | 관리 작업에서 최근 파티션을 이름으로 `ANALYZE` | 이 PC 결함의 보정(정상 서버는 autovacuum) |
 | 묶기·조인의 어림(`date_trunc` 무리 수, 리텐션·퍼널의 범위 조인) | 스캔이 아닌 노드의 어림이 틀림(`ANALYZE`로 안 바뀜) | 질의 모양, 식 확장 통계(`CREATE STATISTICS … ON (date_trunc(…))`, 소유자 마이그레이션) | 앱 |
-| 정렬·해시가 디스크로 | `temp_bytes` 증가, `BufFile*` 대기, `Sort Method: external`, HashAgg `Batches` > 1 | `SET LOCAL work_mem`(또는 `hash_mem_multiplier`). 메모리 상한은 풀 × (작업자 + 1) × 노드 수 × `work_mem` × 해시 배수로 센다 | 앱 |
+| 정렬·해시가 디스크로 | `temp_bytes` 증가, `Buffile*` 대기, `Sort Method: external`, HashAgg `Batches` > 1 | `SET LOCAL work_mem`(또는 `hash_mem_multiplier`). 메모리 상한은 풀 × (작업자 + 1) × 노드 수 × `work_mem` × 해시 배수로 센다 | 앱 |
 | JIT | `pg_jit_available()`이 참이고 JIT 시간이 실행의 큰 몫 | `SET LOCAL jit = off` | 앱(쓸 수 없으면 후보에서 뺀다) |
 | 병렬 작업자 모자람 | `Workers Launched < Planned`(풀 4 × 작업자 2 = 8 = `max_parallel_workers`) | `SET LOCAL max_parallel_workers_per_gather` | 앱 |
 | 리포트 풀의 줄서기 | 풀 대기가 요청 시간의 큰 몫이고 DB CPU에 여유 | 풀 크기(코어 수와 병렬 작업자 안에서) | 앱 |

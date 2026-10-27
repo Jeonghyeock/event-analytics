@@ -6,7 +6,7 @@
 
 1. k6 v2.3.0. seat-booking과 같은 것을 씁니다(`%LOCALAPPDATA%\Programs\k6-v2.3.0\`, 다른 곳이면 환경 변수 `K6`).
 2. 측정 템플릿(약 20초): `npm run load:template -w @event-analytics/api`
-   - 개발 DB(소유자 주소의 DB)를 `event_analytics_load_template`으로 복제합니다(`STRATEGY FILE_COPY`). 그다음 집계를 끝까지 돌리고, `VACUUM (FREEZE, ANALYZE)`를 한 뒤 일반 표의 autovacuum을 끕니다.
+   - 개발 DB(소유자 주소의 DB)를 `event_analytics_load_template`으로 복제합니다(`STRATEGY FILE_COPY`). 그다음 집계를 끝까지 돌리고, 잎 표마다 `VACUUM (FREEZE, ANALYZE)`를 하고, 파티션 부모(`events`)의 통계를 지운 뒤(운영처럼), 일반 표의 autovacuum을 끕니다.
    - 복제하려면 개발 DB에 연결이 없어야 합니다. 개발 API를 먼저 끕니다.
    - 기록은 `load/results/load-template.json`에 남습니다.
 
@@ -15,7 +15,7 @@
 `npm run load:run -w @event-analytics/api -- --scene <s1|s2|s2open> [옵션]`
 
 회차마다 다음을 합니다.
-1. 템플릿을 `event_analytics_load`로 복제하고, 오늘부터 앞으로 7일의 파티션을 만듭니다.
+1. 템플릿을 `event_analytics_load`로 복제하고, 지난 7일 ~ 앞으로 7일의 파티션을 만듭니다(관리 작업과 같은 범위, autovacuum 끔).
 2. 상태를 기록합니다. 더러운 시간이 있으면 거절합니다.
 3. API를 포트 3202에 띄워 P코어에 묶습니다(로그 warn, `LOAD_STATS`).
 4. 집계 작업이 지금의 정시까지 따라잡길 기다립니다.
@@ -32,7 +32,7 @@
 | `--bg 10` | S2: 배경 수집의 초당 배치(기본 10 = 초당 2,000건) |
 | `--n 4`, `--minutes 20` | S2: 마케터 수, 정상 구간 분(예열은 VU마다 묶음 한 바퀴) |
 | `--mix weighted\|equal` | S2: 리포트 몫(3·2·2·2·1·1·2 또는 모두 1) |
-| `--open-rates r1:6,r2:4,…`, `--open-warmup 60` | S2open: 종류마다 분당 도착률, 예열 초 |
+| `--open-rates r1:6,r6:2.7,…`, `--open-warmup 60` | S2open: 종류마다 분당 도착률(소수 가능), 예열 초 |
 | `--no-align` | 정상 구간이 UTC 정시를 넘지 않게 기다리지 않습니다(시험용) |
 
 예:
