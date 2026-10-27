@@ -17,12 +17,15 @@ const PLOT_W = W - M.left - M.right;
 const PLOT_H = H - M.top - M.bottom;
 const MAX_X_LABELS = 8;
 
-// 글자 줄이기(날짜 계산이 아니다): "2026-10-27" → "10-27", "2026-10-27 13:00" → "10-27 13:00"
-const shortLabel = (label: string) => (/^\d{4}-/.test(label) ? label.slice(5) : label);
+const describe = (b: ChartBucket) => `${b.label}${b.state === "current" ? " · 진행 중" : ""}${b.partial ? " · 일부" : ""}`;
 
 export function TimeSeriesChart({ title, buckets, series }: { title: string; buckets: ChartBucket[]; series: LineSeries[] }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const [hoverState, setHover] = useState<number | null>(null);
+  // 키보드로 옮길 때만 화면 읽기 프로그램에 읽힌다(마우스로 움직일 때마다 읽히지 않게)
+  const [announce, setAnnounce] = useState("");
   const n = buckets.length;
+  // 앞의 결과를 흐리게 보이는 동안 묶음 수가 줄 수 있다. 범위 밖이면 없는 것으로 본다(코드 리뷰).
+  const hover = hoverState !== null && hoverState < n ? hoverState : null;
   const x = (i: number) => M.left + (n === 1 ? PLOT_W / 2 : (i * PLOT_W) / (n - 1));
   const max = Math.max(1, ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)));
   const ticks = niceTicks(max);
@@ -30,7 +33,10 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
   const y = (v: number) => M.top + PLOT_H * (1 - v / top);
   const dashed = (i: number) => buckets[i]!.state === "current" || buckets[i]!.partial;
   const step = Math.ceil(n / MAX_X_LABELS);
-  const lastKnown = buckets.findLastIndex((b) => b.state !== "future");
+  const lastKnown = Math.max(0, buckets.findLastIndex((b) => b.state !== "future"));
+  // 글자 줄이기(날짜 계산이 아니다): 기간이 한 해 안이면 연도를 뗀다("2026-10-27 13:00" → "10-27 13:00")
+  const sameYear = n > 0 && buckets[0]!.label.slice(0, 4) === buckets[n - 1]!.label.slice(0, 4);
+  const shortLabel = (label: string) => (sameYear && /^\d{4}-/.test(label) ? label.slice(5) : label);
 
   const paths = series.map((s) => {
     let solid = "";
@@ -52,6 +58,23 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
     const i = n === 1 ? 0 : Math.round(((px - M.left) / PLOT_W) * (n - 1));
     setHover(Math.max(0, Math.min(n - 1, i)));
   };
+  const moveTo = (i: number) => {
+    setHover(i);
+    const b = buckets[i]!;
+    setAnnounce(
+      b.state === "future"
+        ? `${describe(b)}: 아직 오지 않은 묶음`
+        : `${describe(b)}: ${series.map((s) => `${s.label} ${formatCount(s.values[i] ?? 0)}`).join(", ")}`,
+    );
+  };
+
+  // 툴팁은 십자선 옆에 두되, 가장자리에서는 안쪽으로 붙인다(영역 밖으로 나가지 않게)
+  const tooltipStyle = (i: number) => {
+    const ratio = x(i) / W;
+    if (ratio < 0.25) return { left: `${ratio * 100}%`, transform: "translateX(8px)" };
+    if (ratio > 0.75) return { left: `${ratio * 100}%`, transform: "translateX(calc(-100% - 8px))" };
+    return { left: `${ratio * 100}%`, transform: "translateX(-50%)" };
+  };
 
   return (
     <div className={styles.chart}>
@@ -72,17 +95,17 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
         aria-label={`${title} 그래프. 왼쪽·오른쪽 화살표로 묶음을 옮겨 값을 읽는다. 정확한 값은 아래 표에 있다.`}
         onPointerMove={(e) => pick(e.clientX, e.currentTarget.getBoundingClientRect())}
         onPointerLeave={() => setHover(null)}
-        onFocus={() => setHover((h) => h ?? Math.max(0, lastKnown))}
+        onFocus={() => hover === null && moveTo(lastKnown)}
         onBlur={() => setHover(null)}
         onKeyDown={(e) => {
-          if (e.key === "ArrowLeft") setHover((h) => Math.max(0, (h ?? lastKnown) - 1));
-          else if (e.key === "ArrowRight") setHover((h) => Math.min(n - 1, (h ?? lastKnown) + 1));
+          if (e.key === "ArrowLeft") moveTo(hover === null ? lastKnown : Math.max(0, hover - 1));
+          else if (e.key === "ArrowRight") moveTo(hover === null ? lastKnown : Math.min(n - 1, hover + 1));
           else if (e.key === "Escape") setHover(null);
           else return;
           e.preventDefault();
         }}
       >
-        <svg viewBox={`0 0 ${W} ${H}`} className={styles.svg} role="img" aria-hidden="true">
+        <svg viewBox={`0 0 ${W} ${H}`} className={styles.svg} aria-hidden="true">
           {ticks.map((t) => (
             <g key={t}>
               <line x1={M.left} x2={W - M.right} y1={y(t)} y2={y(t)} className={styles.grid} />
@@ -93,7 +116,14 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
           ))}
           {buckets.map((b, i) =>
             i % step === 0 ? (
-              <text key={b.bucket} x={x(i)} y={H - M.bottom + 18} className={styles.xTick} textAnchor="middle">
+              <text
+                key={b.bucket}
+                x={x(i)}
+                y={H - M.bottom + 18}
+                className={styles.xTick}
+                // 양 끝 글자는 안쪽으로 붙여 영역 밖으로 나가지 않게
+                textAnchor={n > 1 && i === 0 ? "start" : n > 1 && i === n - 1 ? "end" : "middle"}
+              >
                 {shortLabel(b.label)}
               </text>
             ) : null,
@@ -111,19 +141,15 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
           ))}
         </svg>
         {hover !== null && (
-          <div className={styles.tooltip} style={{ left: `${(x(hover) / W) * 100}%` }} role="status">
-            <p className={styles.tooltipTitle}>
-              {buckets[hover]!.label}
-              {buckets[hover]!.state === "current" && " · 진행 중"}
-              {buckets[hover]!.partial && " · 일부"}
-            </p>
+          <div className={styles.tooltip} style={tooltipStyle(hover)} aria-hidden="true">
+            <p className={styles.tooltipTitle}>{describe(buckets[hover]!)}</p>
             {buckets[hover]!.state === "future" ? (
               <p className={styles.muted}>아직 오지 않은 묶음</p>
             ) : (
               <ul>
                 {series.map((s) => (
                   <li key={s.key}>
-                    <span className={styles.lineKey} style={{ background: s.color }} aria-hidden="true" />
+                    <span className={styles.lineKey} style={{ background: s.color }} />
                     <strong>{formatCount(s.values[hover] ?? 0)}</strong> {s.label}
                   </li>
                 ))}
@@ -131,6 +157,9 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
             )}
           </div>
         )}
+        <p className="visually-hidden" aria-live="polite">
+          {announce}
+        </p>
       </div>
     </div>
   );

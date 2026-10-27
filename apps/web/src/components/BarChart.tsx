@@ -9,8 +9,10 @@ export type Bar = { key: string; label: string; value: number; color: string; no
 const BAR = 20;
 const GAP = 12;
 const LABEL_W = 180;
-const VALUE_W = 120;
+const VALUE_W = 200;
 const W = 800;
+// 이름 칸(180)에 들어가는 글자 수쯤. 넘으면 말줄임을 하고 전체 이름은 막대의 제목(<title>)에 둔다(코드 리뷰).
+const MAX_LABEL = 22;
 
 // 끝만 둥근 막대: 왼쪽(기준선)은 각지고 오른쪽 위·아래 모서리만 4px
 function barPath(x: number, y: number, w: number, h: number) {
@@ -18,6 +20,8 @@ function barPath(x: number, y: number, w: number, h: number) {
   if (w <= 0) return "";
   return `M${x},${y}H${x + w - r}A${r},${r} 0 0 1 ${x + w},${y + r}V${y + h - r}A${r},${r} 0 0 1 ${x + w - r},${y + h}H${x}Z`;
 }
+
+const clip = (label: string) => (label.length > MAX_LABEL ? `${label.slice(0, MAX_LABEL - 1)}…` : label);
 
 export function BarChart({ title, bars }: { title: string; bars: Bar[] }) {
   const max = Math.max(1, ...bars.map((b) => b.value));
@@ -34,7 +38,7 @@ export function BarChart({ title, bars }: { title: string; bars: Bar[] }) {
             <g key={b.key}>
               <title>{`${b.label}: ${formatCount(b.value)}${b.note ? ` (${b.note})` : ""}`}</title>
               <text x={LABEL_W - 8} y={y + BAR / 2} className={styles.barLabel} dominantBaseline="middle" textAnchor="end">
-                {b.label}
+                {clip(b.label)}
               </text>
               <path d={barPath(LABEL_W, y, w, BAR)} style={{ fill: b.color }} />
               <text x={LABEL_W + w + 8} y={y + BAR / 2} className={styles.barValue} dominantBaseline="middle">
