@@ -81,12 +81,14 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
     const connect = pool.connect.bind(pool) as unknown as (callback?: ConnectCallback) => Promise<pg.PoolClient> | undefined;
     const timedConnect = (callback?: ConnectCallback) => {
       const started = performance.now();
+      // 연결을 청한 요청을 지금 잡는다. 풀이 꽉 차 줄을 서면 pg-pool은 다른 요청이 연결을 놓을 때 그 맥락에서 콜백을 불러,
+      // 그때 getStore()는 놓은 요청을 준다(콜백형 connect, 곧 pool.query의 길에서 대기가 엉뚱한 요청에 붙었다. 테스트로 재현).
+      const timing = requestTiming.getStore();
       const record = (failed: boolean) => {
         const waited = performance.now() - started;
         const window = poolWindows.get(name)!;
         window.connectWaits.push(waited);
         if (failed) window.connectErrors++;
-        const timing = requestTiming.getStore();
         if (timing) {
           timing.poolWaitMs += waited;
           timing.connects++;

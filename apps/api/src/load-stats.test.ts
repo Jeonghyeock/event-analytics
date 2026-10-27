@@ -17,6 +17,11 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
   const app = buildApp(pool, {}, { reportPool });
   app.get("/test/busy", async (_request, reply) => reply.code(503).send({ error: "바쁨", code: "busy" }));
   app.get("/test/plain-error", async (_request, reply) => reply.code(400).send("code 없음"));
+  // 리포트 풀의 연결을 ms만큼 쥐었다 놓는다. pool.query는 안에서 콜백형 connect를 쓴다(줄을 서면 놓는 쪽의 맥락에서 불린다)
+  app.get("/test/hold", async (request) => {
+    await reportPool.query("select pg_sleep($1::float8 / 1000)", [Number((request.query as { ms: string }).ms)]);
+    return { ok: true };
+  });
   stats.attach(app);
   stats.start();
   afterAll(async () => {
@@ -87,6 +92,21 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
     const res = await pending;
     const waited = Number(/pool;dur=([\d.]+)/.exec(res.headers["server-timing"] as string)?.[1]);
     expect(waited).toBeGreaterThanOrEqual(250);
+  });
+
+  it("줄을 서서 받은 연결의 대기는 기다린 요청에 붙는다(연결을 놓은 요청이 아니라)", async () => {
+    // 리포트 풀(2개)을 A·B가 400ms 쥐고, C는 둘 가운데 하나가 놓을 때까지 기다린다. pg-pool은 놓는 쪽의 맥락에서 C의 콜백을 부른다.
+    const hold = (url: string) => app.inject(url);
+    const a = hold("/test/hold?ms=400");
+    const b = hold("/test/hold?ms=400");
+    await new Promise((r) => setTimeout(r, 50));
+    const c = hold("/test/hold?ms=0");
+    const wait = async (res: Promise<{ headers: Record<string, unknown> }>) =>
+      Number(/pool;dur=([\d.]+)/.exec(String((await res).headers["server-timing"]))?.[1]);
+    const [waitA, waitB, waitC] = await Promise.all([wait(a), wait(b), wait(c)]);
+    expect(waitC).toBeGreaterThanOrEqual(250);
+    expect(waitA).toBeLessThan(100);
+    expect(waitB).toBeLessThan(100);
   });
 
   it("연결을 받지 못한 것(대기 한도)을 연결 오류로 세고, 새로 맺은 연결 수를 쓴다", async () => {
