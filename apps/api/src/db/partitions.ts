@@ -60,6 +60,8 @@ export async function listPartitions(client: pg.ClientBase) {
 // 그래서 따로 만든 빈 표를 ATTACH로 붙인다. 부모에는 ShareUpdateExclusiveLock만 걸려 INSERT·SELECT와 부딪히지 않는다.
 // 기본 키 인덱스는 새 표의 것이 부모 인덱스에 붙고, 권한은 소유자의 기본 권한으로 붙는다.
 // 만들기와 붙이기를 한 트랜잭션으로 해, 붙이다 실패하면 따로 만든 표도 남지 않는다.
+// 있는지는 이름이 아니라 pg_inherits(붙어 있는지)로 본다. 그 날 이름의 표가 붙지 않은 채 남아 있으면 그 표를 붙인다
+// (붙일 때 PostgreSQL이 경계 밖 행이 없는지 훑는다).
 // 경계는 오프셋을 붙인 글자로 써서 세션 시간대와 상관없이 UTC 자정이다(DESIGN 10장 14).
 export async function createDailyPartitions(
   client: pg.ClientBase,
@@ -69,6 +71,7 @@ export async function createDailyPartitions(
 ): Promise<string[]> {
   checkDay(from, to);
   const existing = new Set((await listPartitions(client)).map((p) => p.name));
+  const loose = new Set(await looseTables(client));
   const created: string[] = [];
   for (let day = from; day <= to; day = addDays(day, 1)) {
     const name = partitionName(day);
@@ -77,7 +80,7 @@ export async function createDailyPartitions(
       await client.query("begin");
       try {
         await client.query(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
-        await client.query(`CREATE TABLE ${name} (LIKE events INCLUDING ALL)`);
+        if (!loose.has(name)) await client.query(`CREATE TABLE ${name} (LIKE events INCLUDING ALL)`);
         await client.query(
           `ALTER TABLE events ATTACH PARTITION ${name} FOR VALUES FROM ('${day} 00:00+00') TO ('${addDays(day, 1)} 00:00+00')`,
         );
@@ -90,6 +93,22 @@ export async function createDailyPartitions(
     created.push(name);
   }
   return created;
+}
+
+// 이름이 events_pYYYYMMDD인데 events에 붙어 있지 않은 표(뗐지만 지우지 못한 것 등).
+async function looseTables(client: pg.ClientBase) {
+  const { rows } = await client.query<{ name: string }>(
+    `select c.relname as name from pg_class c
+      where c.relkind = 'r' and c.relnamespace = 'public'::regnamespace and c.relname like 'events_p%'
+        and not exists (select 1 from pg_inherits i where i.inhrelid = c.oid)`,
+  );
+  return rows.map((r) => r.name).filter((name) => dayOf(name) !== null);
+}
+
+// DB 시각의 UTC 날짜(DESIGN 10장 16). 앱 서버와 DB의 시계가 달라도 관리 작업과 수집이 같은 "오늘"을 쓴다.
+export async function dbToday(client: pg.ClientBase | pg.Pool) {
+  const { rows } = await client.query<{ today: string }>("select to_char(now() at time zone 'UTC', 'YYYY-MM-DD') as today");
+  return rows[0]!.today;
 }
 
 // 지금 붙어 있지 않은 날(from~to, 둘 다 포함). 앱 role도 부를 수 있다(카탈로그만 읽음).
@@ -105,43 +124,74 @@ export async function missingPartitionDays(client: pg.ClientBase | pg.Pool, from
   return missing;
 }
 
-export type MaintainResult = { finalized: string[]; created: string[]; dropped: string[] };
+export type MaintainResult = { created: string[]; finalized: string[]; dropped: string[]; errors: string[] };
 
-// 관리 작업(db:maintain). 여러 번 돌려도 같은 결과다. 트랜잭션 밖의 연결로 부른다(CONCURRENTLY).
-// 1) 중간에 끊긴 떼기를 마무리한다. 떼는 중인 파티션이 있으면 다른 파티션을 뗄 수 없다(55000, 확인함).
-// 2) today − 7일부터 today + 7일까지 없는 날을 만든다.
-// 3) today − 90일보다 앞선 날을 CONCURRENTLY로 떼고 지운다.
+// 관리 작업이 겹쳐 돌지 않게 잡는 advisory lock 번호(같은 DB 안에서만 뜻이 있다).
+const MAINTAIN_LOCK = 7_340_203;
+// CONCURRENTLY 떼기의 문장 시간 한도. 부모 표에 잠금을 쥔 트랜잭션이 끝나길 기다리므로, 잊힌 트랜잭션 앞에서 끝나지 않을 수 있다.
+const DETACH_TIMEOUT = "5min";
+
+// 관리 작업(db:maintain, DESIGN 6.2). 여러 번 돌려도 같은 결과다. 트랜잭션 밖의 연결로 부른다(CONCURRENTLY).
+// 순서: 1) 만들기 2) 끊긴 떼기 마무리 3) 보관 기간이 지난 날 떼고 지우기 4) 붙지 않은 채 남은 표 치우기.
+// 한 단계가 실패해도 다음 단계를 돌리고 errors에 남긴다. 부르는 쪽은 errors가 있으면 실패로 끝낸다.
+// 수집에 가장 중요한 만들기를 먼저 한다. 떼는 중인 파티션이 남아 있으면 다른 파티션을 뗄 수 없어(55000) 떼기를 건너뛴다.
 export async function maintain(
   client: pg.ClientBase,
-  { today = utcDay(new Date()), retryDelaysMs = RETRY_DELAYS_MS }: Options & { today?: string } = {},
+  { today, retryDelaysMs = RETRY_DELAYS_MS, detachTimeout = DETACH_TIMEOUT }: Options & { today?: string; detachTimeout?: string } = {},
 ): Promise<MaintainResult> {
-  checkDay(today);
-  const result: MaintainResult = { finalized: [], created: [], dropped: [] };
-  const oldest = addDays(today, -RETENTION_DAYS);
-  await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'`);
+  const result: MaintainResult = { created: [], finalized: [], dropped: [], errors: [] };
+  const locked = (await client.query<{ ok: boolean }>("select pg_try_advisory_lock($1) as ok", [MAINTAIN_LOCK])).rows[0]!.ok;
+  if (!locked) throw new Error("다른 관리 작업이 돌고 있습니다");
+  const step = async (name: string, work: () => Promise<void>) => {
+    try {
+      await work();
+    } catch (err) {
+      result.errors.push(`${name}: ${(err as Error).message}`);
+    }
+  };
   try {
-    for (const p of (await listPartitions(client)).filter((p) => p.pending)) {
-      await withLockRetry(() => client.query(`ALTER TABLE events DETACH PARTITION ${p.name} FINALIZE`), retryDelaysMs);
-      result.finalized.push(p.name);
-      // 떼다 끊긴 것은 보관 기간이 지나 떼던 것이다. 마저 지운다.
-      if (p.day < oldest) await dropTable(client, p.name, retryDelaysMs, result);
-    }
-    result.created = await createDailyPartitions(client, addDays(today, -BEHIND_DAYS), addDays(today, AHEAD_DAYS), {
-      retryDelaysMs,
+    const day = today ?? (await dbToday(client));
+    checkDay(day);
+    const oldest = addDays(day, -RETENTION_DAYS);
+    await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'`);
+
+    await step("만들기", async () => {
+      result.created = await createDailyPartitions(client, addDays(day, -BEHIND_DAYS), addDays(day, AHEAD_DAYS), { retryDelaysMs });
     });
-    for (const p of (await listPartitions(client)).filter((p) => p.day < oldest)) {
-      // CONCURRENTLY는 그 파티션을 볼 수 있는 트랜잭션이 끝나길 한도 없이 기다린다. 기다리는 동안 INSERT·SELECT를 막지 않는다
-      // (부모에 ShareUpdateExclusiveLock). 그래서 마이그레이션 실행기의 CONCURRENTLY처럼 잠금 대기 한도를 끈다.
-      await client.query("set lock_timeout = 0");
-      try {
-        await client.query(`ALTER TABLE events DETACH PARTITION ${p.name} CONCURRENTLY`);
-      } finally {
-        await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'`).catch(() => {});
+
+    // FINALIZE는 DB의 더 오래된 스냅샷이 모두 끝나길 기다린다. 잠금 대기 1초로 묶어, 기다리는 동안 부모를 쥐어 다른 일을 막지 않게 한다.
+    await step("마무리", async () => {
+      for (const p of (await listPartitions(client)).filter((p) => p.pending)) {
+        await withLockRetry(() => client.query(`ALTER TABLE events DETACH PARTITION ${p.name} FINALIZE`), retryDelaysMs);
+        result.finalized.push(p.name);
       }
-      await dropTable(client, p.name, retryDelaysMs, result);
-    }
+    });
+
+    await step("떼기", async () => {
+      const partitions = await listPartitions(client);
+      if (partitions.some((p) => p.pending)) throw new Error("떼는 중인 파티션이 남아 있어 건너뜁니다(다음 실행이 마무리부터 합니다)");
+      for (const p of partitions.filter((p) => p.day < oldest)) {
+        // CONCURRENTLY는 잠금 줄을 만들지 않아(부모에 ShareUpdateExclusiveLock) 잠금 대기 한도를 끈다.
+        // 대신 문장 시간 한도를 둔다. 닿으면 떼는 중으로 남고 다음 실행이 마무리한다.
+        await client.query(`set lock_timeout = 0; set statement_timeout = '${detachTimeout}'`);
+        try {
+          await client.query(`ALTER TABLE events DETACH PARTITION ${p.name} CONCURRENTLY`);
+        } finally {
+          await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'; reset statement_timeout`).catch(() => {});
+        }
+        await dropTable(client, p.name, retryDelaysMs, result);
+      }
+    });
+
+    // 뗐지만 지우지 못한 표(마무리한 것, DROP 직전에 끊긴 것). 보관 기간이 지난 것만 지운다.
+    await step("치우기", async () => {
+      for (const name of await looseTables(client)) {
+        if (dayOf(name)! < oldest) await dropTable(client, name, retryDelaysMs, result);
+      }
+    });
   } finally {
     await client.query("reset lock_timeout").catch(() => {});
+    await client.query("select pg_advisory_unlock($1)", [MAINTAIN_LOCK]).catch(() => {});
   }
   return result;
 }

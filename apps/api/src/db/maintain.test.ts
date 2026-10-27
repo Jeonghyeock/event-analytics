@@ -60,7 +60,7 @@ describe("관리 작업", () => {
     expect(first.created).toHaveLength(15);
     expect(first.created[0]).toBe("events_p20261020");
     expect(first.created.at(-1)).toBe("events_p20261103");
-    expect(await maintain(owner, { today, ...fast })).toEqual({ finalized: [], created: [], dropped: [] });
+    expect(await maintain(owner, { today, ...fast })).toEqual({ created: [], finalized: [], dropped: [], errors: [] });
 
     // 새 파티션의 기본 키 인덱스는 부모 인덱스에 붙었고, 앱 role은 소유자의 기본 권한으로 DML을 할 수 있다
     const { rows } = await owner.query(
@@ -149,8 +149,59 @@ describe("관리 작업", () => {
     expect((await listPartitions(owner)).find((p) => p.name === "events_p20260727")).toMatchObject({ pending: true });
 
     const result = await maintain(owner, { today, ...fast });
-    expect(result.finalized).toEqual(["events_p20260727"]);
-    expect(result.dropped).toEqual(["events_p20260727"]);
+    // 마무리한 표는 붙지 않은 채 남으므로 치우기 단계가 지운다
+    expect(result).toMatchObject({ finalized: ["events_p20260727"], dropped: ["events_p20260727"], errors: [] });
+  });
+
+  // 리뷰가 확인한 것: CONCURRENTLY는 그 파티션을 읽지 않았어도 부모에 잠금을 쥔 트랜잭션을 모두 기다린다.
+  it("잊힌 트랜잭션 앞에서 떼기는 시간 한도에 닿아 떼는 중으로 남고, 만들기는 이미 끝났으며, 다음 실행들이 마무리하고 지운다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await createDailyPartitions(owner, "2026-07-27", "2026-07-27", fast);
+    // 오늘만 읽고 트랜잭션을 연 채 잊은 세션(가지치기로 7월 27일은 읽지 않았다). REPEATABLE READ라 스냅샷도 쥐고 있다
+    const forgotten = await connect(db.app);
+    await forgotten.query("begin isolation level repeatable read");
+    await forgotten.query("select count(*) from events where occurred_at >= '2026-10-27 00:00+00' and occurred_at < '2026-10-28 00:00+00'");
+
+    const first = await maintain(owner, { today, ...fast, detachTimeout: "1s" });
+    expect(first.created).toHaveLength(15);
+    expect(first.errors).toEqual([expect.stringMatching(/^떼기: /)]);
+    expect((await listPartitions(owner)).find((p) => p.name === "events_p20260727")).toMatchObject({ pending: true });
+
+    // 아직 열려 있으면 마무리(더 오래된 스냅샷을 기다린다)도 1초 안에 못 하고, 떼기는 건너뛴다
+    const second = await maintain(owner, { today, ...fast });
+    expect(second.errors).toEqual([expect.stringMatching(/^마무리: /), expect.stringMatching(/^떼기: 떼는 중인 파티션/)]);
+
+    await forgotten.query("commit");
+    expect(await maintain(owner, { today, ...fast })).toEqual({
+      created: [],
+      finalized: ["events_p20260727"],
+      dropped: ["events_p20260727"],
+      errors: [],
+    });
+  });
+
+  it("다른 관리 작업이 돌고 있으면 바로 실패한다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    const other = await connect(db.owner);
+    await other.query("select pg_advisory_lock(7340203)");
+    await expect(maintain(owner, { today, ...fast })).rejects.toThrow(/다른 관리 작업/);
+  });
+
+  it("붙지 않은 채 남은 표: 만들 범위 안이면 붙이고(행도 보인다), 보관 기간이 지났으면 지운다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await owner.query("create table events_p20261028 (like events including all)");
+    await owner.query(insertSql("2026-10-28").replace("into events", "into events_p20261028"));
+    await owner.query("create table events_p20260701 (like events including all)");
+
+    const result = await maintain(owner, { today, ...fast });
+    expect(result.created).toContain("events_p20261028");
+    expect(result.dropped).toEqual(["events_p20260701"]);
+    expect(result.errors).toEqual([]);
+    const { rows } = await owner.query("select count(*)::int as n from events where occurred_at >= '2026-10-28 00:00+00' and occurred_at < '2026-10-29 00:00+00'");
+    expect(rows).toEqual([{ n: 1 }]);
   });
 
   it("없는 날을 찾는다(떼는 중인 것은 없는 것으로 본다). 서버의 경고는 앱 role로 본다", async () => {
