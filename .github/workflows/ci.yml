@@ -39,8 +39,8 @@ jobs:
             --exclude-dir=node_modules --exclude-dir=dist "$1" apps packages | sort; }
           found="$(src DATABASE_OWNER_URL)"
           expected="$(printf '%s\n' \
+            apps/api/src/db/maintain-cli.ts \
             apps/api/src/db/migrate-cli.ts \
-            apps/api/src/db/partitions-cli.ts \
             apps/api/test/global-setup.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
           # 테스트는 앱 role로 돈다. 소유자 주소를 받는 테스트도 정해 둔다.
@@ -48,6 +48,7 @@ jobs:
           expected="$(printf '%s\n' \
             apps/api/src/db/databases.test.ts \
             apps/api/src/db/events.test.ts \
+            apps/api/src/db/maintain.test.ts \
             apps/api/src/db/migrate.test.ts \
             apps/api/src/db/roles.test.ts \
             apps/api/src/routes/ingest.test.ts \

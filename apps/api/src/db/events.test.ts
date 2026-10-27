@@ -36,8 +36,10 @@ const insert = (client: pg.ClientBase, id: string, occurredAt: string, platform 
   );
 
 describe("일 파티션", () => {
+  // createDailyPartitions는 날마다 트랜잭션을 스스로 연다. 그래서 되돌리지 않고 만든 뒤 지운다.
   it("날짜마다 UTC 자정 경계로 만들고, 이미 있는 날은 건너뛴다(세션 시간대가 Asia/Seoul이어도)", async () => {
-    await inRolledBack(owner, async (client) => {
+    const client = await owner.connect();
+    try {
       const from = "2100-01-30";
       expect(await createDailyPartitions(client, from, "2100-02-01")).toEqual([
         "events_p21000130",
@@ -54,7 +56,10 @@ describe("일 파티션", () => {
       expect(rows).toEqual([
         { name: "events_p21000131", bound: "FOR VALUES FROM ('2100-01-31 09:00:00+09') TO ('2100-02-01 09:00:00+09')" },
       ]);
-    });
+    } finally {
+      await client.query("drop table if exists events_p21000130, events_p21000131, events_p21000201");
+      client.release();
+    }
   });
 
   it("UTC 자정 직전과 자정은 다른 파티션으로 간다(+09:00으로 써도 같은 순간)", async () => {

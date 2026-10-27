@@ -1,5 +1,6 @@
 import { buildApp } from "./app.js";
 import { createPool } from "./db/pool.js";
+import { startPartitionWatch } from "./partition-watch.js";
 
 // 서버는 앱 role(DML만)로 접속한다. 마이그레이션은 소유자 주소로 따로 돌린다(db:migrate).
 const databaseUrl = process.env.DATABASE_URL;
@@ -16,7 +17,12 @@ const host = process.env.HOST ?? "127.0.0.1";
 // 연결을 받기까지 5초를 넘기면 실패한다. 한도가 없으면 DB에 닿지 않을 때 /health가 503 대신 멈춰 있다.
 const pool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-api", connectionTimeoutMillis: 5_000 });
 const app = buildApp(pool, { logger: true }, { ingestWriteKey });
-app.addHook("onClose", () => pool.end());
+// 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고한다(DESIGN 6.2).
+const stopWatch = startPartitionWatch(pool, app.log);
+app.addHook("onClose", async () => {
+  stopWatch();
+  await pool.end();
+});
 
 const shutdown = () => {
   void app.close().then(() => process.exit(0));
