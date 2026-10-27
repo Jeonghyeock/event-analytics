@@ -637,10 +637,10 @@
 **E2E**(Playwright 하나, 10장 55)
 - seat-booking과 같은 틀이다. DB `event_analytics_e2e`, 포트 API 3102·화면 5175, 주소는 모두 `127.0.0.1`이다.
 - **날짜는 한 곳에서 정한다.** `playwright.config.ts` 맨 위에서 `process.env.E2E_DAY ??= 한국 시각의 어제`로 한 번 정하고, `webServer.env`로 준비에 넘긴다. 테스트(worker)는 같은 환경 변수를 읽는다. 준비와 테스트가 각자 계산하면 그 사이 한국 시각 자정을 넘을 때 어긋난다.
-- `e2e:prepare`(소유자): 경로가 `/event_analytics_e2e`가 아니면 거절, 지우고 `NEW_DATABASE_OPTIONS`로 만들기(builtin `C.UTF-8`, 정렬 확인), 마이그레이션, 파티션(`dbToday` − 보관 일수 ~ + 미리 만드는 일수, 관리 작업과 같은 범위. 한국 시각의 하루는 UTC 파티션 둘에 걸친다), 고정 데이터(한국 시각 10~14시, 오프셋을 붙인 글자).
+- `e2e:prepare`(소유자): 경로가 `/event_analytics_e2e`가 아니면 거절, 지우고 `NEW_DATABASE_OPTIONS`로 만들기(builtin `C.UTF-8`, 정렬 확인), 마이그레이션, 파티션(`dbToday` − 7일 ~ + 7일, 관리 작업의 만들기와 같은 범위. 한국 시각의 하루는 UTC 파티션 둘에 걸친다), 고정 데이터(한국 시각 10~14시, 오프셋을 붙인 글자).
 - `e2e:serve`: 소유자 주소를 지우고 `INGEST_WRITE_KEY`를 무작위로 넣은 뒤 서버를 띄운다(화면은 수집하지 않는다). 스크립트는 `--env-file`을 쓰지 않고, `webServer.env`가 다섯 키(`DATABASE_URL`, `DATABASE_OWNER_URL`, `PORT`, `HOST`, `E2E_DAY`)를 모두 준다.
 - 서버의 집계 작업이 테스트 중에 돌아도 수는 같다(집계 행과 워터마크를 함께 커밋하고, 리포트는 한 스냅샷에서 읽는다. 설계 리뷰가 확인함). `meta.source`만 바뀔 수 있다.
-- 시나리오: 리포트를 설정해 표의 수가 고정 데이터와 같다 → 이름(재시도에 겹치지 않게 무작위 꼬리)을 붙여 저장 → 목록에서 다시 열어 같은 수 → 퍼널에서 고정 데이터의 단계 수와 "첫 진입 기준" → 리텐션에서 어제 무리의 1일째가 "아직"(빈칸)이다.
+- 시나리오: 리포트를 설정해 표의 수가 고정 데이터와 같다 → 이름(재시도에 겹치지 않게 무작위 꼬리)을 붙여 저장 → 목록에서 다시 열어 같은 수. 저장한 화면에서 바로 지우면 "저장했습니다"가 남지 않는다. 퍼널에서 고정 데이터의 단계 수와 "첫 진입 기준". 리텐션에서 어제 무리의 1일째가 "아직"(빈칸)이다. 실행 중 한국 시각 자정을 넘기면 서버의 `meta.today`로 기대값을 정한다.
 - CI: `e2e` 작업을 더한다(postgres:18, role 둘, Playwright chromium, 15분). 소유자 주소를 읽는 새 파일 셋(`e2e-prepare-cli.ts`, `e2e-serve-cli.ts`, `playwright.config.ts`)을 `ci.yml`의 허용 목록에 더한다. 테스트 작업에 화면의 형 검사·빌드·단위 테스트를 더한다. `.gitignore`에 `test-results/`, `playwright-report/`.
 
 **테스트**

@@ -10,7 +10,10 @@ const E2E_DATABASE = "event_analytics_e2e";
 
 const url = process.env.DATABASE_OWNER_URL;
 if (!url) throw new Error("DATABASE_OWNER_URL이 없습니다");
-if (new URL(url).pathname !== `/${E2E_DATABASE}`) throw new Error(`E2E 준비는 ${E2E_DATABASE} DB에만 합니다`);
+// URL의 오류는 입력 전체(비밀번호 포함)를 담으므로 그대로 던지지 않는다(코드 리뷰)
+const pathname = URL.parse(url)?.pathname;
+if (pathname === undefined) throw new Error("DATABASE_OWNER_URL을 URL로 읽지 못했습니다");
+if (pathname !== `/${E2E_DATABASE}`) throw new Error(`E2E 준비는 ${E2E_DATABASE} DB에만 합니다`);
 // 고정 데이터의 날(한국 시각). playwright.config.ts가 한 번 정해 준비와 테스트가 함께 쓴다(각자 계산하면 자정에 어긋난다).
 const day = process.env.E2E_DAY ?? "";
 if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new Error("E2E_DAY(YYYY-MM-DD)가 없습니다");
