@@ -8,6 +8,13 @@
       "when": 1793092760177,
       "tag": "0000_app_role",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793094300275,
+      "tag": "0001_events",
+      "breakpoints": true
     }
   ]
 }

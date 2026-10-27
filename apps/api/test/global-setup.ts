@@ -1,6 +1,8 @@
+import pg from "pg";
 import type { TestProject } from "vitest/node";
 import { dropDatabase, NEW_DATABASE_OPTIONS, withAdminClient, withDatabase } from "../src/db/databases.js";
 import { runMigrations } from "../src/db/migrate.js";
+import { addDays, createDailyPartitions, utcDay } from "../src/db/partitions.js";
 
 // 테스트는 앱 role(DML만)로 돈다. DB 만들기와 마이그레이션, 소유자만 되는 일(ANALYZE, 권한 확인)은 소유자 주소로 한다(DESIGN 10장 12).
 declare module "vitest" {
@@ -38,6 +40,7 @@ export default async function setup(project: TestProject) {
       await client.query(`DROP DATABASE IF EXISTS ${TEMPLATE} WITH (FORCE)`);
       await client.query(`CREATE DATABASE ${TEMPLATE} ${NEW_DATABASE_OPTIONS}`);
       await runMigrations(withDatabase(baseUrl, TEMPLATE));
+      await createTestPartitions(withDatabase(baseUrl, TEMPLATE));
       // 강제 종료된 실행이 같은 pid로 남긴 DB가 있으면 지우고 만든다.
       for (const db of [testDb, isolatedDb]) {
         await client.query(`DROP DATABASE IF EXISTS ${db} WITH (FORCE)`);
@@ -56,4 +59,17 @@ export default async function setup(project: TestProject) {
       for (const db of [testDb, isolatedDb]) await dropDatabase(client, db);
     });
   };
+}
+
+// 수집 테스트는 지금 기준의 시각으로 이벤트를 만든다. 받을 기간(과거 7일, 미래 1시간)을 하루씩 넘게 덮는다.
+// 연결을 닫고 돌아온다(템플릿에 연결이 남으면 바로 뒤의 복제가 실패한다).
+async function createTestPartitions(url: string) {
+  const client = new pg.Client({ connectionString: url });
+  await client.connect();
+  try {
+    const today = utcDay(new Date());
+    await createDailyPartitions(client, addDays(today, -8), addDays(today, 2));
+  } finally {
+    await client.end();
+  }
 }
