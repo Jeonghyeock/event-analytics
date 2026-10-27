@@ -60,6 +60,9 @@ const Properties = z.record(z.string(), z.unknown()).superRefine((value, ctx) =>
   if (issue) ctx.addIssue({ code: "custom", message: issue });
 });
 
+// 이벤트 이름. 퍼널의 단계와 리텐션의 시작·돌아옴 이벤트도 같은 규칙이다.
+export const EventName = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "영문 소문자로 시작하고 소문자·숫자·밑줄로 64자까지입니다");
+
 // 모르는 필드는 거절한다(strict). 조용히 버리면 보내는 쪽의 오타(campain 등)가 데이터 손실이 된다.
 export const IngestEvent = z.strictObject({
   // UUID 버전은 묻지 않는다. PostgreSQL uuid가 받는 하이픈 형식이면 된다.
@@ -67,7 +70,7 @@ export const IngestEvent = z.strictObject({
   // 오프셋이 있어야 한다(Z, +09:00). 수집은 밀리초로 잘라 저장한다(DESIGN 10장 17).
   occurredAt: z.iso.datetime({ offset: true }),
   userId: Text(128),
-  eventName: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, "영문 소문자로 시작하고 소문자·숫자·밑줄로 64자까지입니다"),
+  eventName: EventName,
   platform: z.enum(PLATFORMS),
   country: z.string().regex(/^[A-Z]{2}$/, "대문자 두 글자(ISO 3166-1)입니다").optional(),
   channel: Text(128).optional(),
@@ -132,17 +135,20 @@ const MIN_REPORT_DATE = "2000-01-01";
 const ReportDate = z.iso.date().refine((d) => d >= MIN_REPORT_DATE, `${MIN_REPORT_DATE} 이후의 날짜입니다`);
 const daysBetween = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
 
+// 값 목록 안에 있으면 남긴다(IN). null을 넣으면 값이 없는 것도 남긴다. 여러 필터는 모두 맞아야 한다(AND).
+const filtersOf = <const D extends readonly [string, ...string[]]>(dimensions: D) =>
+  z
+    .array(z.strictObject({ dimension: z.enum(dimensions), values: z.array(Text(128).nullable()).min(1).max(100) }))
+    .max(dimensions.length)
+    .refine((filters) => distinct(filters.map((f) => f.dimension)), "같은 차원의 필터가 둘입니다")
+    .default([]);
+
 // 리포트 설정. 모든 이름은 허용 목록이고 모르는 필드는 거절한다. SQL에는 코드의 상수 식별자와 매개변수만 들어간다(10장 31~32).
 export const ReportQuery = z
   .strictObject({
     metrics: z.array(z.enum(METRICS)).min(1).max(2).refine(distinct, "지표가 겹칩니다"),
     dimensions: z.array(z.enum(DIMENSIONS)).max(2).refine(distinct, "차원이 겹칩니다").default([]),
-    // 값 목록 안에 있으면 남긴다(IN). null을 넣으면 값이 없는 것도 남긴다. 여러 필터는 모두 맞아야 한다(AND).
-    filters: z
-      .array(z.strictObject({ dimension: z.enum(DIMENSIONS), values: z.array(Text(128).nullable()).min(1).max(100) }))
-      .max(DIMENSIONS.length)
-      .refine((filters) => distinct(filters.map((f) => f.dimension)), "같은 차원의 필터가 둘입니다")
-      .default([]),
+    filters: filtersOf(DIMENSIONS),
     // 리포트 시간대의 날짜, 둘 다 포함
     from: ReportDate,
     to: ReportDate,
@@ -197,3 +203,86 @@ export const ReportFailure = z.object({
   error: z.string(),
   code: z.enum(["too_many_rows", "out_of_retention", "report_timeout", "busy"]),
 });
+
+// ── 퍼널과 리텐션(DESIGN 6.5) ──
+
+// 퍼널·리텐션의 필터와 나눔에는 이벤트 이름이 없다(단계와 시작·돌아옴 이벤트가 이벤트 이름이다).
+export const EVENT_DIMENSIONS = ["platform", "country", "channel", "campaign"] as const;
+export const MAX_FUNNEL_STEPS = 6;
+export const MAX_FUNNEL_WINDOW_MINUTES = 10_080;
+export const MAX_RETENTION_COHORT_DAYS = 31;
+export const MAX_RETENTION_DAYS = 30;
+
+// 첫 진입 기준 전환: 사용자의 기간 안 첫 1단계가 진입이고, 뒤 단계는 앞 단계보다 엄격히 뒤의 첫 이벤트로
+// [진입, 진입 + 전환 기간) 안이어야 한다. 필터는 모든 단계의 이벤트에, 나눔은 진입 이벤트의 값에 건다(10장 42~43).
+export const FunnelQuery = z
+  .strictObject({
+    steps: z.array(EventName).min(2).max(MAX_FUNNEL_STEPS),
+    windowMinutes: z.number().int().min(1).max(MAX_FUNNEL_WINDOW_MINUTES),
+    filters: filtersOf(EVENT_DIMENSIONS),
+    breakdown: z.array(z.enum(EVENT_DIMENSIONS)).max(1).default([]),
+    from: ReportDate,
+    to: ReportDate,
+    timezone: z.enum(TIMEZONES).default("Asia/Seoul"),
+  })
+  .refine((q) => q.from <= q.to, { message: "from이 to보다 늦습니다", path: ["from"] })
+  .refine((q) => daysBetween(q.from, q.to) < MAX_REPORT_DAYS, { message: `기간은 ${MAX_REPORT_DAYS}일까지입니다`, path: ["to"] });
+export type FunnelQuery = z.infer<typeof FunnelQuery>;
+
+// steps[i]는 i + 1단계까지 온 사용자 수다. 전환율은 화면이 나눈다. 나눔의 행은 서로 겹치지 않아 더하면 전체다.
+export const FunnelResult = z.object({
+  rows: z.array(z.object({ dimensions: z.record(z.string(), z.string().nullable()), steps: z.array(z.number().int()) })),
+  meta: z.object({
+    timezone: z.enum(TIMEZONES),
+    // 첫 진입 기준 전환(다음 시도의 전환은 세지 않는다). 화면이 이 이름을 붙인다.
+    entry: z.literal("first"),
+    rangeStart: z.string(),
+    rangeEnd: z.string(),
+    // 기간 끝 + 전환 기간(UTC ISO). 지금보다 뒤면 전환 기간이 아직 끝나지 않은 진입이 "전환 안 함"으로 세어져 있다.
+    windowEnd: z.string(),
+    // windowEnd가 최근 7일 안이면 늦은 이벤트가 더 올 수 있다
+    provisional: z.boolean(),
+  }),
+});
+export type FunnelResult = z.infer<typeof FunnelResult>;
+
+// 날마다 무리: 무리 d는 그날 시작 이벤트가 있는 사용자 전부이고, N일째는 d + N일에 돌아옴 이벤트가 있다(10장 45).
+// 이벤트 이름이 없으면 모든 이벤트다. 필터는 시작과 돌아옴 이벤트 모두에 건다.
+export const RetentionQuery = z
+  .strictObject({
+    startEvent: EventName.optional(),
+    returnEvent: EventName.optional(),
+    days: z.number().int().min(1).max(MAX_RETENTION_DAYS),
+    filters: filtersOf(EVENT_DIMENSIONS),
+    from: ReportDate,
+    to: ReportDate,
+    timezone: z.enum(TIMEZONES).default("Asia/Seoul"),
+  })
+  .refine((q) => q.from <= q.to, { message: "from이 to보다 늦습니다", path: ["from"] })
+  .refine((q) => daysBetween(q.from, q.to) < MAX_RETENTION_COHORT_DAYS, {
+    message: `무리의 기간은 ${MAX_RETENTION_COHORT_DAYS}일까지입니다`,
+    path: ["to"],
+  });
+export type RetentionQuery = z.infer<typeof RetentionQuery>;
+
+// 기간의 모든 날이 행이다. 무리끼리 더할 수 없다(한 사람이 여러 무리에 든다). returned[i]는 i + 1일째이고,
+// 아직 다 지나지 않은 날의 칸은 null이다(0이면 "아무도 안 돌아왔다"로 읽힌다).
+export const RetentionResult = z.object({
+  rows: z.array(
+    z.object({
+      cohort: z.string(),
+      cohortStart: z.string(),
+      users: z.number().int(),
+      returned: z.array(z.number().int().nullable()),
+    }),
+  ),
+  meta: z.object({
+    timezone: z.enum(TIMEZONES),
+    rangeStart: z.string(),
+    rangeEnd: z.string(),
+    days: z.number().int(),
+    // 마지막 칸의 날의 끝(to + 1 + days일 자정)이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다
+    provisional: z.boolean(),
+  }),
+});
+export type RetentionResult = z.infer<typeof RetentionResult>;
