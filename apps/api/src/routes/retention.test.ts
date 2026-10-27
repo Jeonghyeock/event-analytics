@@ -172,6 +172,14 @@ describe("손으로 센 리텐션(날마다 무리)", () => {
   });
 });
 
+describe("SQL의 결과", () => {
+  it("(무리의 날, N)마다 행이 하나다(무리 크기 n = 0과 칸이 섞이지 않음)", async () => {
+    const { text, values } = buildRetentionSql(RetentionQuery.parse({ ...base, from: "2026-10-19" }));
+    const keys = (await pool.query<{ cohort: string; n: number }>(text, values)).rows.map((r) => `${r.cohort}:${r.n}`);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+});
+
 describe("가지치기", () => {
   it("무리 10-20~10-22, 3일째까지는 10-19~10-25 파티션만 계획한다(돌아옴의 끝이 날짜 산술)", async () => {
     const { text, values } = buildRetentionSql(RetentionQuery.parse(base));

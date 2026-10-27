@@ -26,7 +26,9 @@ import { buildFunnelSql } from "../reports/funnel-sql.js";
 //   u13 a 10-27 03:00, b 03:50, c 04:30                  → 2 (기간은 진입부터. 앞 단계부터면 3)
 //   u14 a 10-27 05:00, b 05:10, c 05:30, b 05:50         → 3 (단계마다 가장 이른 것. 늦은 b를 고르면 2)
 //   u15 a 10-27 15:30(기간 끝 뒤, windowEnd 앞)            → 진입 아님
-// 합: 1단계 14, 2단계 8(u1, u6, u7, u8, u9, u12, u13, u14), 3단계 2(u1, u14). 나머지 플랫폼은 ios, 채널은 없음.
+//   u16 a 10-27 06:30 naver와 kakao(같은 밀리초, u10과 반대로 작은 event_id를 먼저 넣음) → 1 (나눔은 naver)
+//       동률을 넣은 순서대로 풀든 거꾸로 풀든, event_id를 거꾸로 보든 google·kakao 행이 달라진다(채널이 비대칭이라, 기록 리뷰)
+// 합: 1단계 15, 2단계 8(u1, u6, u7, u8, u9, u12, u13, u14), 3단계 2(u1, u14). 나머지 플랫폼은 ios, 채널은 없음.
 let db: Awaited<ReturnType<typeof openDatabase>>;
 let pool: pg.Pool;
 let app: ReturnType<typeof buildApp>;
@@ -71,6 +73,8 @@ const FIXTURE: Row[] = [
   ["u14", "c", "2026-10-27 05:30"],
   ["u14", "b", "2026-10-27 05:50"],
   ["u15", "a", "2026-10-27 15:30"],
+  ["u16", "a", "2026-10-27 06:30", "ios", "naver", "00000000-0000-4000-8000-000000000001"],
+  ["u16", "a", "2026-10-27 06:30", "ios", "kakao", "ffffffff-0000-4000-8000-000000000001"],
 ];
 
 beforeAll(async () => {
@@ -111,11 +115,11 @@ async function funnel(body: Record<string, unknown>) {
 }
 
 describe("손으로 센 퍼널(첫 진입 기준)", () => {
-  it("한국 시각 10-27: 1단계 14, 2단계 8, 3단계 2이고, meta에 첫 진입 기준과 windowEnd를 싣는다", async () => {
+  it("한국 시각 10-27: 1단계 15, 2단계 8, 3단계 2이고, meta에 첫 진입 기준과 windowEnd를 싣는다", async () => {
     expect(await funnel({})).toEqual({
       status: 200,
       body: {
-        rows: [{ dimensions: {}, steps: [14, 8, 2] }],
+        rows: [{ dimensions: {}, steps: [15, 8, 2] }],
         meta: {
           timezone: "Asia/Seoul",
           entry: "first",
@@ -129,26 +133,26 @@ describe("손으로 센 퍼널(첫 진입 기준)", () => {
   });
 
   it("필터는 모든 단계에 건다: ios면 u8의 2단계(web)가 빠지고, naver면 u9의 2단계(google)가 빠진다", async () => {
-    expect((await funnel({ filters: [{ dimension: "platform", values: ["ios"] }] })).body.rows).toEqual([{ dimensions: {}, steps: [14, 7, 2] }]);
-    expect((await funnel({ filters: [{ dimension: "channel", values: ["naver"] }] })).body.rows).toEqual([{ dimensions: {}, steps: [3, 1, 1] }]);
+    expect((await funnel({ filters: [{ dimension: "platform", values: ["ios"] }] })).body.rows).toEqual([{ dimensions: {}, steps: [15, 7, 2] }]);
+    expect((await funnel({ filters: [{ dimension: "channel", values: ["naver"] }] })).body.rows).toEqual([{ dimensions: {}, steps: [4, 1, 1] }]);
   });
 
-  it("나눔은 진입 이벤트의 값이고(u9는 naver), 같은 밀리초는 event_id로 정하며(u10은 google), 행의 합이 전체다", async () => {
+  it("나눔은 진입 이벤트의 값이고(u9는 naver), 같은 밀리초는 event_id로 정하며(u10은 google, u16은 naver), 행의 합이 전체다", async () => {
     expect((await funnel({ breakdown: ["channel"] })).body.rows).toEqual([
       { dimensions: { channel: "google" }, steps: [1, 0, 0] },
-      { dimensions: { channel: "naver" }, steps: [2, 2, 1] },
+      { dimensions: { channel: "naver" }, steps: [3, 2, 1] },
       { dimensions: { channel: null }, steps: [11, 6, 1] },
     ]);
   });
 
   it("a → a: 같은 이벤트를 두 번 쓰지 않고(u10), 엄격히 뒤의 a가 전환 기간 안이면 2단계다(u11)", async () => {
     // u4는 두 번째 a(20:00)가 진입(18:00) + 60분 밖, u6은 기간 안의 a가 하나, u10은 두 a가 같은 밀리초
-    expect((await funnel({ steps: ["a", "a"] })).body.rows).toEqual([{ dimensions: {}, steps: [14, 1] }]);
+    expect((await funnel({ steps: ["a", "a"] })).body.rows).toEqual([{ dimensions: {}, steps: [15, 1] }]);
   });
 
   it("전환 기간을 늘리면 u3(정각)·u4(두 번째 시도)도 2단계, u13도 3단계다", async () => {
     // 1일: u3의 b(18:00), u4의 b(20:10)가 진입 + 1일 안. u2(순서)·u5(같은 밀리초)·u12(c가 b 앞)는 그대로
-    expect((await funnel({ windowMinutes: 1_440 })).body.rows).toEqual([{ dimensions: {}, steps: [14, 10, 3] }]);
+    expect((await funnel({ windowMinutes: 1_440 })).body.rows).toEqual([{ dimensions: {}, steps: [15, 10, 3] }]);
   });
 
   it("provisional은 windowEnd로 판단한다(기간 끝은 10일 전이어도 전환 기간 7일이면 참)", async () => {
