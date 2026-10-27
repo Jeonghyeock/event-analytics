@@ -142,7 +142,15 @@ export async function missingPartitionDays(client: pg.ClientBase | pg.Pool, from
   return missing;
 }
 
-export type MaintainResult = { created: string[]; finalized: string[]; dropped: string[]; errors: string[] };
+export type MaintainResult = { created: string[]; finalized: string[]; dropped: string[]; analyzed: boolean; errors: string[] };
+
+// 부모 표(events)의 통계(DESIGN 6.2 5단계, 10장 62). autovacuum은 파티션 부모를 분석하지 않는다(PostgreSQL의 설계).
+// 부모의 통계는 파티션을 가로지르는 묶기·조인의 어림에 쓰이고, 없으면 기본값(무리 200 × 200 = 4만)이 된다. 리텐션 31일은 그 어림으로
+// 병렬 해시 묶기를 골라 리더의 마지막 묶기가 30초를 넘겼다(실제 무리 115만, 7단계 측정). ONLY: 잎은 다시 분석하지 않는다(autovacuum의 일).
+// 부모에 ShareUpdateExclusiveLock을 건다(수집·리포트는 막지 않는다). 측정 실행기도 복제한 뒤 이것을 부른다(관리 작업이 하는 일과 같게).
+export async function analyzeParent(client: pg.ClientBase) {
+  await client.query("ANALYZE ONLY public.events");
+}
 
 // 관리 작업이 겹쳐 돌지 않게 잡는 advisory lock 번호(같은 DB 안에서만 뜻이 있다).
 const MAINTAIN_LOCK = 7_340_203;
@@ -150,7 +158,7 @@ const MAINTAIN_LOCK = 7_340_203;
 const DETACH_TIMEOUT = "5min";
 
 // 관리 작업(db:maintain, DESIGN 6.2). 여러 번 돌려도 같은 결과다. 트랜잭션 밖의 연결로 부른다(CONCURRENTLY).
-// 순서: 1) 만들기 2) 끊긴 떼기 마무리 3) 보관 기간이 지난 날 떼고 지우기 4) 붙지 않은 채 남은 표 치우기.
+// 순서: 1) 만들기 2) 끊긴 떼기 마무리 3) 보관 기간이 지난 날 떼고 지우기 4) 붙지 않은 채 남은 표 치우기 5) 부모 표의 통계.
 // 한 단계가 실패해도 다음 단계를 돌리고 errors에 남긴다. 부르는 쪽은 errors가 있으면 실패로 끝낸다.
 // 수집에 가장 중요한 만들기를 먼저 한다. 떼는 중인 파티션이 남아 있으면 다른 파티션을 뗄 수 없어(55000) 떼기를 건너뛴다.
 export async function maintain(
@@ -158,7 +166,7 @@ export async function maintain(
   { today, retryDelaysMs = RETRY_DELAYS_MS, detachTimeout = DETACH_TIMEOUT }: Options & { today?: string; detachTimeout?: string } = {},
 ): Promise<MaintainResult> {
   outsideTransaction(client);
-  const result: MaintainResult = { created: [], finalized: [], dropped: [], errors: [] };
+  const result: MaintainResult = { created: [], finalized: [], dropped: [], analyzed: false, errors: [] };
   const locked = (await client.query<{ ok: boolean }>("select pg_try_advisory_lock($1) as ok", [MAINTAIN_LOCK])).rows[0]!.ok;
   if (!locked) throw new Error("다른 관리 작업이 돌고 있습니다");
   const step = async (name: string, work: () => Promise<void>) => {
@@ -214,6 +222,12 @@ export async function maintain(
       for (const name of await looseTables(client)) {
         if (dayOf(name)! < oldest) await dropTable(client, name, retryDelaysMs, result);
       }
+    });
+
+    // 붙이고 뗀 뒤의 파티션들로 센다
+    await step("부모 통계", async () => {
+      await withLockRetry(() => analyzeParent(client), retryDelaysMs);
+      result.analyzed = true;
     });
   } finally {
     await client.query("reset lock_timeout").catch(() => {});
