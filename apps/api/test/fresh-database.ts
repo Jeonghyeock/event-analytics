@@ -14,12 +14,13 @@ export async function openDatabase(prefix: string) {
     await client.query(`CREATE DATABASE ${name} ${NEW_DATABASE_OPTIONS}`);
   });
   const owner = withDatabase(ownerUrl, name);
-  await runMigrations(owner);
-  return {
-    owner,
-    app: withDatabase(inject("databaseUrl"), name),
-    drop: () => withAdminClient(ownerUrl, (client) => dropDatabase(client, name)),
-  };
+  const drop = () => withAdminClient(ownerUrl, (client) => dropDatabase(client, name));
+  // 마이그레이션이 실패해도 DB를 남기지 않는다(이름에 pid가 들어 다음 실행이 지우지 못한다).
+  await runMigrations(owner).catch(async (err: unknown) => {
+    await drop();
+    throw err;
+  });
+  return { owner, app: withDatabase(inject("databaseUrl"), name), drop };
 }
 
 // 그 테스트만 쓰는 새 DB. 테스트가 끝나면 실패해도 지운다.

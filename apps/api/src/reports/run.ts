@@ -1,6 +1,7 @@
 import { MAX_REPORT_ROWS, type ReportQuery, type ReportResult } from "@event-analytics/shared";
 import type pg from "pg";
-import { buildBucketsSql, buildReportSql, toReportBuckets, toReportRows } from "./sql.js";
+import { RETENTION_DAYS } from "../db/partitions.js";
+import { buildBucketsSql, buildReportSql, END, START, toReportBuckets, toReportRows } from "./sql.js";
 
 // 리포트를 돌린다(DESIGN 6.3, 10장 35). 읽기 전용 트랜잭션에서 문장 30초, 잠금 대기 3초로 묶는다(트랜잭션 안에서만).
 
@@ -36,10 +37,10 @@ export async function runReport(
     ]);
     // 기간을 리포트 시간대로 바꾼 순간, 보관 기간의 시작(UTC 날짜로 90일 전 0시), 끝이 최근 7일 안인지(늦은 이벤트가 더 온다).
     const range = await client.query<{ from: Date; to: Date; retained_from: Date; provisional: boolean }>(
-      `select ($1::date::timestamp at time zone $3::text) as "from", (($2::date + 1)::timestamp at time zone $3::text) as "to",
-              ((coalesce($4::timestamptz, now()) at time zone 'UTC')::date - 90)::timestamp at time zone 'UTC' as retained_from,
-              (($2::date + 1)::timestamp at time zone $3::text) > coalesce($4::timestamptz, now()) - interval '7 days' as provisional`,
-      [q.from, q.to, q.timezone, asOf ?? null],
+      `select ${START} as "from", ${END} as "to",
+              ((coalesce($4::timestamptz, now()) at time zone 'UTC')::date - $5::int)::timestamp at time zone 'UTC' as retained_from,
+              ${END} > coalesce($4::timestamptz, now()) - interval '7 days' as provisional`,
+      [q.from, q.to, q.timezone, asOf ?? null, RETENTION_DAYS],
     );
     const { from, to, retained_from: retainedFrom, provisional } = range.rows[0]!;
     // 조용히 0을 주면 "그때는 이벤트가 없었다"로 읽힌다. 시작 날이 일부만 남은 경우도 거절한다.
@@ -59,8 +60,8 @@ export async function runReport(
       rows: toReportRows(q, rows),
       meta: {
         timezone: q.timezone,
-        from: from.toISOString(),
-        to: to.toISOString(),
+        rangeStart: from.toISOString(),
+        rangeEnd: to.toISOString(),
         rowCount: rows.length,
         source: "raw",
         provisional,
