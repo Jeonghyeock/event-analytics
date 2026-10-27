@@ -9,7 +9,8 @@ import { buildCohortDaysSql, buildRetentionSql, toRetentionRows } from "./retent
 const funnel = (patch: Record<string, unknown> = {}) =>
   FunnelQuery.parse({ steps: ["performance_list_viewed", "seat_map_viewed", "seats_held"], windowMinutes: 30, from: "2026-10-20", to: "2026-10-26", ...patch });
 const retention = (patch: Record<string, unknown> = {}) => RetentionQuery.parse({ days: 7, from: "2026-10-20", to: "2026-10-26", ...patch });
-const windowEnd = new Date("2026-10-26T15:30:00Z");
+// 어느 시간대의 기간 끝 + 전환 기간보다도 뒤(windowEnd는 가지치기의 경계라, 작으면 전환이 조용히 빠진다)
+const windowEnd = new Date("2026-10-28T00:00:00Z");
 
 describe("buildFunnelSql", () => {
   it("단계 이름·필터 값·날짜는 매개변수로만 가고, windowEnd도 매개변수다", () => {
@@ -65,6 +66,10 @@ describe("buildRetentionSql", () => {
     expect(text).toContain("e.occurred_at < (($2::date + 1 + $4::int)::timestamp at time zone $3::text)");
     expect(text).not.toContain("interval");
     expect(text).toContain("b.d - c.d between 1 and $4::int");
+    // 시작 이벤트는 무리(c)에, 돌아옴 이벤트는 돌아옴(b)에
+    const [cohort, back] = text.split("\nb as (");
+    expect(cohort).toContain("e.event_name = $5::text");
+    expect(back).toContain("e.event_name = $6::text");
     expect(text).not.toContain("seats_held");
     expect(values).toEqual(["2026-10-20", "2026-10-26", "Asia/Seoul", 7, "seats_held", "payment_succeeded", ["ios"]]);
     // 필터는 시작과 돌아옴 모두에
@@ -77,9 +82,9 @@ describe("buildRetentionSql", () => {
     expect(values).toHaveLength(4);
   });
 
-  it("결과 행: 기간의 모든 날, 무리 없는 날은 0, 다 지나지 않은 칸은 null", () => {
-    const q = retention({ days: 3, from: "2026-10-24", to: "2026-10-26" });
-    const days = ["2026-10-24", "2026-10-25", "2026-10-26"].map((cohort, i) => ({ cohort, start: new Date(Date.UTC(2026, 9, 23 + i, 15)) }));
+  it("결과 행: 기간의 모든 날, 무리 없는 날은 0, 다 지나지 않은 칸은 null, 오지 않은 날의 무리는 null", () => {
+    const q = retention({ days: 3, from: "2026-10-24", to: "2026-10-28" });
+    const days = ["2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28"].map((cohort, i) => ({ cohort, start: new Date(Date.UTC(2026, 9, 23 + i, 15)) }));
     const counts = [
       { cohort: "2026-10-24", n: 0, users: 10 },
       { cohort: "2026-10-24", n: 2, users: 4 },
@@ -90,6 +95,8 @@ describe("buildRetentionSql", () => {
       { cohort: "2026-10-24", cohortStart: "2026-10-23T15:00:00.000Z", users: 10, returned: [0, 4, null] },
       { cohort: "2026-10-25", cohortStart: "2026-10-24T15:00:00.000Z", users: 0, returned: [0, null, null] },
       { cohort: "2026-10-26", cohortStart: "2026-10-25T15:00:00.000Z", users: 6, returned: [null, null, null] },
+      { cohort: "2026-10-27", cohortStart: "2026-10-26T15:00:00.000Z", users: 0, returned: [null, null, null] },
+      { cohort: "2026-10-28", cohortStart: "2026-10-27T15:00:00.000Z", users: null, returned: [null, null, null] },
     ]);
   });
 });

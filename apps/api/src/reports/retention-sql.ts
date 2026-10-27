@@ -1,4 +1,5 @@
 import type { RetentionQuery, RetentionResult } from "@event-analytics/shared";
+import { addDays } from "../db/partitions.js";
 import { END, filterConditions, type ReportSql, START } from "./sql.js";
 
 // 리텐션 → SQL(DESIGN 6.5, 10장 45). 날마다 무리: 무리 d는 그날 시작 이벤트가 있는 사용자 전부이고,
@@ -30,26 +31,27 @@ export function buildRetentionSql(q: RetentionQuery): ReportSql {
 b as (select e.user_id, ${day} as d from events e
     where e.occurred_at >= ${RETURN_START} and e.occurred_at < ${RETURN_END}${returnEvent}${filters}
     group by 1, 2)
-select c.d::text as cohort, 0 as n, count(*)::int as users from c group by c.d
+select to_char(c.d, 'YYYY-MM-DD') as cohort, 0 as n, count(*)::int as users from c group by c.d
 union all
-select c.d::text, b.d - c.d, count(*)::int from c join b on b.user_id = c.user_id and b.d - c.d between 1 and $4::int
+select to_char(c.d, 'YYYY-MM-DD'), b.d - c.d, count(*)::int from c join b on b.user_id = c.user_id and b.d - c.d between 1 and $4::int
 group by c.d, b.d - c.d
 order by 1, 2`;
   return { text, values };
 }
 
 // 기간의 모든 날과 그 자정(리포트 시간대)의 순간. 무리가 없는 날도 행이 있게 한다.
+// 날짜 산술로 만든다. generate_series(date, date, interval)은 timestamptz로 풀려 세션 시간대에 기대고, 자정에 일광 절약 시간이
+// 시작되는 곳(산티아고 등)에서는 마지막 날이 빠진다(코드 리뷰가 재현함).
 export function buildCohortDaysSql(q: RetentionQuery): ReportSql {
   return {
-    text: `select d::date::text as cohort, (d::date::timestamp at time zone $3::text) as start
-      from generate_series($1::date, $2::date, interval '1 day') d order by 1`,
+    text: `select to_char(d, 'YYYY-MM-DD') as cohort, (d::timestamp at time zone $3::text) as start
+      from (select $1::date + i as d from generate_series(0, $2::date - $1::date) i) days order by 1`,
     values: [q.from, q.to, q.timezone],
   };
 }
 
-const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
-
 // 결과 → 응답 행. today는 "지금"의 리포트 시간대 날짜다. d + N일이 today와 같거나 뒤면 그 칸은 아직 모른다(null).
+// 무리의 날이 today보다 뒤면 무리 크기도 모른다(null, 0이면 "그날 아무도 없었다"로 읽힌다). 오늘의 무리는 지금까지 센 값이다.
 export function toRetentionRows(
   q: RetentionQuery,
   days: { cohort: string; start: Date }[],
@@ -60,7 +62,7 @@ export function toRetentionRows(
   return days.map(({ cohort, start }) => ({
     cohort,
     cohortStart: start.toISOString(),
-    users: count.get(`${cohort}:0`) ?? 0,
+    users: cohort > today ? null : (count.get(`${cohort}:0`) ?? 0),
     returned: Array.from({ length: q.days }, (_, i) => (addDays(cohort, i + 1) < today ? (count.get(`${cohort}:${i + 1}`) ?? 0) : null)),
   }));
 }
