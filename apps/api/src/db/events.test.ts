@@ -91,7 +91,8 @@ describe("이벤트 기본 키 (event_id, occurred_at)", () => {
     });
   });
 
-  it("마이크로초까지 키에 든다(시각을 글자 그대로 넘기는 이유, DESIGN 10장 17)", async () => {
+  // 그래서 수집은 밀리초로 잘라 넘긴다. 재전송이 같은 시각을 밀리초로 다시 써도 같은 키가 되게(DESIGN 10장 17).
+  it("DB의 키는 마이크로초까지 본다", async () => {
     await inRolledBack(app, async (client) => {
       const id = randomUUID();
       expect((await insert(client, id, `${today}T01:00:00.123456Z`)).rowCount).toBe(1);
