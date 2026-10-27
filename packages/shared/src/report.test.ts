@@ -24,14 +24,15 @@ describe("ReportQuery", () => {
     ["모르는 단위", { granularity: "month" }],
     ["없는 날", { from: "2026-02-30" }],
     ["from이 to보다 늦음", { from: "2026-11-01" }],
-    ["93일", { from: "2026-07-31", to: "2026-10-31" }],
+    ["91일", { from: "2026-08-02", to: "2026-10-31" }],
     ["모르는 필드", { limit: 10 }],
   ])("%s는 거절한다", (_, patch) => {
     expect(ok(patch)).toBe(false);
   });
 
-  it("92일, 차원 둘, 필터 다섯은 받는다", () => {
-    expect(ok({ from: "2026-08-01", to: "2026-10-31", dimensions: ["platform", "campaign"] })).toBe(true);
+  it("90일, 차원 둘, 필터 다섯, 값 없음(null)을 고르는 필터는 받는다", () => {
+    expect(ok({ from: "2026-08-03", to: "2026-10-31", dimensions: ["platform", "campaign"] })).toBe(true);
+    expect(ok({ filters: [{ dimension: "campaign", values: [null, "camp_001"] }] })).toBe(true);
     const filters = ["event_name", "platform", "country", "channel", "campaign"].map((dimension) => ({ dimension, values: ["x"] }));
     expect(ok({ filters })).toBe(true);
   });
