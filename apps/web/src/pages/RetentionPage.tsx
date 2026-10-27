@@ -1,5 +1,5 @@
 import { EVENT_DIMENSIONS, RetentionQuery, type RetentionResult } from "@event-analytics/shared";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import type { z } from "zod";
 import { runRetention } from "../api/endpoints";
@@ -9,6 +9,7 @@ import { LoadError, Loading } from "../components/States";
 import tableStyles from "../components/Table.module.css";
 import { lastDays } from "../lib/form";
 import { formatRate } from "../lib/funnel";
+import { issueMessages } from "../lib/issues";
 import { DAYS_PRESETS, retentionRows } from "../lib/retention";
 import { formatCount } from "../lib/series";
 import styles from "./ReportsPage.module.css";
@@ -18,6 +19,11 @@ type RetentionForm = z.input<typeof RetentionQuery>;
 
 export function RetentionPage() {
   const [query, setQuery] = useState<RetentionQuery | null>(null);
+  // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다)
+  const submit = (q: RetentionQuery) => {
+    if (query !== null && hashKey(["retention", q]) === hashKey(["retention", query])) void retention.refetch();
+    else setQuery(q);
+  };
   const retention = useQuery({
     queryKey: ["retention", query],
     enabled: query !== null,
@@ -27,7 +33,7 @@ export function RetentionPage() {
   return (
     <>
       <h1>리텐션</h1>
-      <RetentionFormView onSubmit={setQuery} />
+      <RetentionFormView onSubmit={submit} />
       <section className={styles.result} aria-label="결과" aria-busy={retention.isFetching}>
         {query === null ? (
           <p className={styles.muted}>무리의 기간을 고르고 "보기"를 누르세요.</p>
@@ -59,7 +65,7 @@ function RetentionFormView({ onSubmit }: { onSubmit: (q: RetentionQuery) => void
         e.preventDefault();
         const parsed = RetentionQuery.safeParse(form);
         if (!parsed.success) {
-          setErrors(parsed.error.issues.map((i) => i.message));
+          setErrors(issueMessages(parsed.error.issues));
           return;
         }
         setErrors([]);

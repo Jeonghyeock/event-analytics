@@ -3,6 +3,7 @@ import { useId, useState } from "react";
 import type { z } from "zod";
 import { DIMENSION_LABELS, lastDays } from "../lib/form";
 import { WINDOW_PRESETS } from "../lib/funnel";
+import { issueMessages } from "../lib/issues";
 import styles from "./Form.module.css";
 import { EventSelect, FilterList, RangeFields } from "./FormParts";
 
@@ -34,7 +35,7 @@ export function FunnelFormView({ initial, onSubmit }: { initial: FunnelForm; onS
         }
         const parsed = FunnelQuery.safeParse(form);
         if (!parsed.success) {
-          setErrors(parsed.error.issues.map((i) => i.message));
+          setErrors(issueMessages(parsed.error.issues));
           return;
         }
         setErrors([]);
