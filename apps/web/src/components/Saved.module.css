@@ -22,10 +22,6 @@
   color: var(--color-text-muted);
 }
 
-.hint:empty {
-  display: none;
-}
-
 .dirty {
   padding: 0 var(--space-2);
   border: 1px solid var(--color-warning);
@@ -95,7 +91,9 @@
   list-style: none;
 }
 
+/* position: 화면 읽기용 구분자(visually-hidden, absolute)가 가로로 넘기는 목록 밖에 자리를 잡아 문서를 넓히지 않게 */
 .list a {
+  position: relative;
   display: block;
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
@@ -116,11 +114,17 @@
   color: var(--color-text-muted);
 }
 
-/* 좁은 화면에서는 본문 위에 가로로 늘어놓는다 */
+/* 좁은 화면에서는 본문 위에 가로 한 줄로 늘어놓고 옆으로 넘긴다(많아도 본문을 밀어내지 않게) */
 @media (max-width: 64rem) {
   .list ul {
     flex-direction: row;
-    flex-wrap: wrap;
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+
+  .list li {
+    flex: 0 0 auto;
+    max-width: 14rem;
   }
 
   .list a {

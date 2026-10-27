@@ -1,5 +1,6 @@
 import { SAVED_REPORT_CONFIGS, type SavedReport, type SavedReportKind } from "@event-analytics/shared";
-import { useQuery } from "@tanstack/react-query";
+import { hashKey, useQuery } from "@tanstack/react-query";
+import { createContext, useContext } from "react";
 import type { z } from "zod";
 import { ApiError } from "./client";
 import { listSavedReports } from "./endpoints";
@@ -12,6 +13,8 @@ export const useSavedReports = () => useQuery({ queryKey: SAVED_KEY, queryFn: li
 // 종류마다 여는 화면. 리텐션은 /retention이다(복수형이 아니다).
 export const SAVED_PATHS: Record<SavedReportKind, string> = { report: "/reports", funnel: "/funnels", retention: "/retention" };
 export const KIND_LABELS: Record<SavedReportKind, string> = { report: "리포트", funnel: "퍼널", retention: "리텐션" };
+// 조사까지 붙인 것("같은 이름의 퍼널이 있습니다")
+export const KIND_SUBJECTS: Record<SavedReportKind, string> = { report: "리포트가", funnel: "퍼널이", retention: "리텐션이" };
 
 export const savedPath = (kind: SavedReportKind, id: string) => `${SAVED_PATHS[kind]}?saved=${id}`;
 
@@ -45,6 +48,20 @@ export function savedGateState<K extends SavedReportKind>(
   return { state: "open", item, config: parsed.data as ConfigOf<K> };
 }
 
-// 저장한 기간은 날짜 그대로라 90일이 지나면 422 out_of_retention이다. 연 리포트면 날짜를 고치라고 덧붙인다.
-export const savedErrorHint = (opened: unknown, error: unknown) =>
-  opened && error instanceof ApiError && error.code === "out_of_retention" ? '저장한 기간이 보관 기간을 지났습니다. 위에서 날짜를 고친 뒤 "보기"를 누르세요.' : undefined;
+// 저장한 기간은 날짜 그대로라 90일이 지나면 422 out_of_retention이다. 연 리포트를 저장한 설정 그대로 셀 때만 날짜를 고치라고 덧붙인다
+// (날짜를 고친 뒤의 422는 저장한 기간 탓이 아니다).
+export function savedErrorHint<K extends SavedReportKind>(opened: OpenedReport<K> | null, requested: ConfigOf<K> | null, error: unknown) {
+  if (!opened || requested === null || hashKey([requested]) !== hashKey([opened.config])) return undefined;
+  if (!(error instanceof ApiError && error.code === "out_of_retention")) return undefined;
+  return '저장한 기간이 보관 기간을 지났습니다. 위에서 날짜를 고친 뒤 "보기"를 누르세요.';
+}
+
+// 저장·지우기의 알림. 화면은 저장·지우기 뒤 새로 붙으므로(key) 알림은 그 바깥(SavedGate)이 들고 있다.
+// for: 알림이 맞는 저장한 리포트의 id(지운 뒤의 새 화면은 null). 다른 것을 열면 알림은 사라진다.
+export type SavedNotice = { for: string | null; text: string };
+export const SavedNoticeContext = createContext<{
+  notice: SavedNotice | null;
+  // focus: 화면이 새로 붙은 뒤 제목으로 포커스를 옮긴다(누른 단추가 사라지므로)
+  notify: (notice: SavedNotice, options?: { focus?: boolean }) => void;
+}>({ notice: null, notify: () => {} });
+export const useSavedNotice = () => useContext(SavedNoticeContext);
