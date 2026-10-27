@@ -1,6 +1,20 @@
 import { ReportQuery, type ReportResult } from "@event-analytics/shared";
 import { describe, expect, it } from "vitest";
-import { assignColors, axisLabels, bucketStates, buildChartData, buildTable, type ChartBucket, niceTicks, OTHER_KEY, seriesKey, seriesLabel } from "./series";
+import {
+  AXIS_FONT,
+  assignColors,
+  axisLabels,
+  bucketStates,
+  buildChartData,
+  buildTable,
+  type ChartBucket,
+  clipText,
+  niceTicks,
+  OTHER_KEY,
+  seriesKey,
+  seriesLabel,
+  textWidth,
+} from "./series";
 
 // 리포트 응답 → 그래프와 표(DESIGN 6.7, 10장 51·53).
 const q = (patch: Record<string, unknown> = {}) =>
@@ -208,5 +222,38 @@ describe("axisLabels", () => {
     const days = (labels: string[]): ChartBucket[] => labels.map((label, i) => ({ bucket: String(i), label, state: "done", partial: false }));
     expect(axisLabels(days(["2026-12-31", "2027-01-01"]), 1000).map((l) => l.text)).toEqual(["2026-12-31", "2027-01-01"]);
     expect(axisLabels(days(["2026-11-01 00:00", "2026-11-01 01:00 (-04:00)", "2026-11-01 01:00 (-05:00)"]), 1000).map((l) => l.text)).toEqual(["00:00"]);
+  });
+
+  it("일광 절약 시간이 끝나는 날(25묶음, 두 01:00)도 고른 글자끼리 겹치지 않는다", () => {
+    const buckets: ChartBucket[] = [
+      { bucket: "0", label: "2026-10-25 00:00", state: "done", partial: false },
+      { bucket: "1", label: "2026-10-25 01:00 (+01:00)", state: "done", partial: false },
+      { bucket: "2", label: "2026-10-25 01:00 (+00:00)", state: "done", partial: false },
+      ...Array.from({ length: 22 }, (_, i) => ({
+        bucket: String(i + 3),
+        label: `2026-10-25 ${String(i + 2).padStart(2, "0")}:00`,
+        state: "done" as const,
+        partial: false,
+      })),
+    ];
+    for (const plotWidth of [280, 520, 720, 1150]) {
+      const labels = axisLabels(buckets, plotWidth);
+      const x = (i: number) => (i * plotWidth) / (buckets.length - 1);
+      for (let k = 1; k < labels.length; k++) {
+        const distance = x(labels[k]!.index) - x(labels[k - 1]!.index);
+        expect(distance).toBeGreaterThanOrEqual(textWidth("00:00", AXIS_FONT));
+      }
+    }
+  });
+});
+
+describe("글자 너비 어림", () => {
+  it("한글은 라틴 글자보다 넓게 세고, 너비를 넘으면 말줄임표로 자른다", () => {
+    expect(textWidth("ab", 10)).toBe(12);
+    expect(textWidth("가나", 10)).toBe(20);
+    expect(clipText("campaign", 100, 10)).toBe("campaign");
+    const clipped = clipText("가을맞이할인캠페인", 50, 10);
+    expect(clipped.endsWith("…")).toBe(true);
+    expect(textWidth(clipped, 10)).toBeLessThanOrEqual(50);
   });
 });

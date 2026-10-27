@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { axisLabels, type ChartBucket, formatCompact, formatCount, niceTicks } from "../lib/series";
+import { AXIS_FONT, axisLabels, type ChartBucket, formatCompact, formatCount, niceTicks, textWidth } from "../lib/series";
 import { useWidth } from "../lib/useWidth";
 import styles from "./Chart.module.css";
 
@@ -113,11 +113,21 @@ export function TimeSeriesChart({ title, buckets, series }: { title: string; buc
               </text>
             </g>
           ))}
-          {axisLabels(buckets, PLOT_W).map(({ index, text }) => (
-            <text key={buckets[index]!.bucket} x={x(index)} y={H - M.bottom + 18} className={styles.xTick} textAnchor="middle">
-              {text}
-            </text>
-          ))}
+          {axisLabels(buckets, PLOT_W).map(({ index, text }) => {
+            // 양 끝의 긴 글자("2027-01-05")가 여백보다 넓으면 SVG 안으로 민다(코드 리뷰)
+            const half = textWidth(text, AXIS_FONT) / 2;
+            return (
+              <text
+                key={buckets[index]!.bucket}
+                x={Math.max(half, Math.min(W - half, x(index)))}
+                y={H - M.bottom + 18}
+                className={styles.xTick}
+                textAnchor="middle"
+              >
+                {text}
+              </text>
+            );
+          })}
           {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={M.top} y2={M.top + PLOT_H} className={styles.crosshair} />}
           {paths.map(({ s, solid, dash, end }) => (
             <g key={s.key}>
