@@ -39,20 +39,20 @@ function ReportScreen({ opened }: { opened: OpenedReport<"report"> | null }) {
     placeholderData: keepPreviousData,
   });
   const [initial] = useState(() => opened?.config ?? defaultReportForm());
-  // 저장하는 것은 지금 보이는 결과의 설정이다
+  // 저장하는 것은 다 센 결과의 설정이다
   const shown = report.isSuccess && !report.isPlaceholderData ? report.data.query : null;
 
   return (
     <>
       <ReportForm initial={initial} onSubmit={submit} />
-      <SaveControls kind="report" opened={opened} shown={shown} />
+      <SaveControls kind="report" opened={opened} requested={query} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={report.isFetching}>
         {query === null ? (
           <p className={styles.muted}>설정을 고르고 "보기"를 누르세요.</p>
         ) : report.isPending ? (
           <Loading />
         ) : report.isError ? (
-          <LoadError error={report.error} onRetry={() => void report.refetch()} hint={savedErrorHint(opened, report.error)} />
+          <LoadError error={report.error} onRetry={() => void report.refetch()} hint={savedErrorHint(opened, query, report.error)} />
         ) : (
           <div className={report.isPlaceholderData ? styles.stale : undefined}>
             <ReportView query={report.data.query} result={report.data.result} />

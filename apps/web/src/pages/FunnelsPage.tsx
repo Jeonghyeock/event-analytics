@@ -42,14 +42,14 @@ function FunnelScreen({ opened }: { opened: OpenedReport<"funnel"> | null }) {
   return (
     <>
       <FunnelFormView initial={initial} onSubmit={submit} />
-      <SaveControls kind="funnel" opened={opened} shown={shown} />
+      <SaveControls kind="funnel" opened={opened} requested={query} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={funnel.isFetching}>
         {query === null ? (
           <p className={styles.muted}>단계를 고르고 "보기"를 누르세요.</p>
         ) : funnel.isPending ? (
           <Loading />
         ) : funnel.isError ? (
-          <LoadError error={funnel.error} onRetry={() => void funnel.refetch()} hint={savedErrorHint(opened, funnel.error)} />
+          <LoadError error={funnel.error} onRetry={() => void funnel.refetch()} hint={savedErrorHint(opened, query, funnel.error)} />
         ) : (
           <div className={funnel.isPlaceholderData ? styles.stale : undefined}>
             <FunnelView query={funnel.data.query} result={funnel.data.result} />

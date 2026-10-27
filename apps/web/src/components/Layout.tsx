@@ -25,6 +25,17 @@ export function Layout() {
 
   return (
     <div className={styles.shell}>
+      {/* 왼쪽 목록을 지나지 않고 본문으로(키보드). 주소에 #main을 붙이면 새 이동이 되어 연 화면이 새로 붙으므로 포커스만 옮긴다. */}
+      <a
+        href="#main"
+        className={styles.skip}
+        onClick={(e) => {
+          e.preventDefault();
+          main.current?.focus();
+        }}
+      >
+        본문으로 건너뛰기
+      </a>
       <header className={styles.header}>
         <Link to="/reports" className={styles.brand}>
           이벤트 분석
@@ -39,7 +50,7 @@ export function Layout() {
         <aside className={styles.aside}>
           <SavedList />
         </aside>
-        <main ref={main} tabIndex={-1} className={styles.main}>
+        <main ref={main} id="main" tabIndex={-1} className={styles.main}>
           <Outlet />
         </main>
       </div>

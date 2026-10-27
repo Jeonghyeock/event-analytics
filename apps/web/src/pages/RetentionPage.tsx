@@ -51,14 +51,14 @@ function RetentionScreen({ opened }: { opened: OpenedReport<"retention"> | null 
   return (
     <>
       <RetentionFormView initial={initial} onSubmit={submit} />
-      <SaveControls kind="retention" opened={opened} shown={shown} />
+      <SaveControls kind="retention" opened={opened} requested={query} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={retention.isFetching}>
         {query === null ? (
           <p className={styles.muted}>무리의 기간을 고르고 "보기"를 누르세요.</p>
         ) : retention.isPending ? (
           <Loading />
         ) : retention.isError ? (
-          <LoadError error={retention.error} onRetry={() => void retention.refetch()} hint={savedErrorHint(opened, retention.error)} />
+          <LoadError error={retention.error} onRetry={() => void retention.refetch()} hint={savedErrorHint(opened, query, retention.error)} />
         ) : (
           <div className={retention.isPlaceholderData ? styles.stale : undefined}>
             <RetentionTable result={retention.data.result} />
