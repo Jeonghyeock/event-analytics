@@ -3,12 +3,14 @@ import { Counter } from "k6/metrics";
 import { BASE, errorCode, eventId, rng, SEED } from "./lib.js";
 
 // 수집(DESIGN 6.8 S1, S2의 배경). 반복 하나가 배치 하나(200건)다. 열린 모형(constant-arrival-rate)으로 돈다.
-// occurred_at은 99%가 지금, 1%가 지난 7일 안 무작위(늦은 이벤트, 집계 작업이 다시 센다). 받을 기간(과거 7일 ~ 미래 1시간) 안이다.
+// occurred_at은 LATE_SHARE(기본 1%)가 지난 7일 안 무작위(늦은 이벤트, 집계 작업이 다시 센다), 나머지는 지금이다.
+// 지난 7일에 고르게 흩는 것은 최악의 경우다(실제 늦은 이벤트는 지금 가까이에 몰린다). 받을 기간(과거 7일 ~ 미래 1시간) 안이다.
 
 const KEY = __ENV.INGEST_KEY;
 if (!KEY) throw new Error("INGEST_KEY가 없습니다(실행기가 프로세스 환경으로 준다)");
 const BATCH = 200;
-const LATE_SHARE = 0.01;
+const LATE_SHARE = Number(__ENV.LATE_SHARE ?? 0.01);
+if (!(LATE_SHARE >= 0 && LATE_SHARE <= 1)) throw new Error(`LATE_SHARE는 0~1입니다: ${__ENV.LATE_SHARE}`);
 // 늦은 이벤트는 받을 기간 끝(7일)에 닿지 않게 6일 23시간까지
 const LATE_MAX_MS = (7 * 24 - 1) * 3_600_000;
 

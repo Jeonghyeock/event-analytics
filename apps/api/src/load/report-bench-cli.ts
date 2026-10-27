@@ -14,8 +14,8 @@ import { FUNNEL } from "./generate.js";
 import { MIX_TIMEZONE, outOfRetention, reportMix, todayIn } from "./mix.js";
 
 // 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 3·4·5·7단계 기록). API와 같은 길(runReport, runFunnel, runRetention)로 센다.
-// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS, COSTS, TIMING)도
-// 남긴다. EXPLAIN은 API와 같은 트랜잭션 틀(inReportTransaction)과 같은 계획 설정(applyPlannerSettings)으로 돌아, 7단계의 고침으로
+// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS, COSTS, TIMING OFF)도
+// 남긴다(노드마다 시각을 재면 이 PC에서는 수백만 행 계획이 몇 배 느려져 30초 한도를 넘는다). EXPLAIN은 API와 같은 트랜잭션 틀(inReportTransaction)과 같은 계획 설정(applyPlannerSettings)으로 돌아, 7단계의 고침으로
 // 더한 SET LOCAL이 계획에도 걸린다(DESIGN 6.8). --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
 // --kind로 리포트·퍼널·리텐션·S2 묶음(mix) 가운데 하나를 고른다. 문장 한도는 API와 같은 30초다(API라면 503이 날 것을 끝까지 돌리지 않게).
 // 7단계에서는 진단에만 쓴다(부하 중 계획). 머리 숫자(p95)는 HTTP로 잰다. 주소를 바꾸려면 DATABASE_URL을 준다(측정 복제본 등).
@@ -122,7 +122,7 @@ const explain = (plannerKind: ReportKind, sql: () => ReportSql, analyze: boolean
   inReportTransaction(pool, { statementTimeout: "30s" }, async (client) => {
     await applyPlannerSettings(client, plannerKind);
     const { text, values: params } = sql();
-    const { rows } = await client.query(`explain (${analyze ? "analyze, buffers, timing, " : ""}costs) ${text}`, params);
+    const { rows } = await client.query(`explain (${analyze ? "analyze, buffers, timing off, " : ""}costs) ${text}`, params);
     return rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
   });
 const results: Record<string, unknown>[] = [];

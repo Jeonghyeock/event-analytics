@@ -47,6 +47,8 @@ const { values: args } = parseArgs({
     step: { type: "string", default: "60" },
     // S2: 배경 수집(초당 배치), 마케터 수, 정상 구간 분, 몫(weighted·equal), 열린 모형의 분당 도착률과 예열 초
     bg: { type: "string", default: "10" },
+    // 수집 이벤트 가운데 늦은 이벤트(지난 7일 안 무작위)의 몫(%). 집계 작업의 일을 크게 바꾼다(7단계 기준선에서 확인).
+    late: { type: "string", default: "1" },
     n: { type: "string", default: "4" },
     minutes: { type: "string", default: "20" },
     mix: { type: "string", default: "weighted" },
@@ -134,6 +136,8 @@ async function caughtUp() {
 
 const masks = cpuMasks();
 const seed = String(positive("seed", args.seed));
+const latePercent = Number(args.late);
+if (!(latePercent >= 0 && latePercent <= 100)) throw new Error(`--late는 0~100(%)입니다: ${args.late}`);
 // k6의 도착률은 정수다. 소수를 주면 복제·띄우기까지 거친 뒤에야 k6가 실패하므로 여기서 거절한다(코드 리뷰).
 const positiveInt = (name: string, value: string | undefined) => {
   const n = positive(name, value);
@@ -231,7 +235,14 @@ async function runCycle({ name, vars, seconds }: Cycle) {
         "run",
         "--log-format=json",
         `--log-output=file=${path.join(dir, "k6-log.jsonl")}`,
-        ...Object.entries({ BASE_URL: BASE, OUT_DIR: dir.replace(/\\/g, "/"), SEED: seed, MIX_FILE: mixFile.replace(/\\/g, "/"), ...vars }).flatMap(
+        ...Object.entries({
+          BASE_URL: BASE,
+          OUT_DIR: dir.replace(/\\/g, "/"),
+          SEED: seed,
+          MIX_FILE: mixFile.replace(/\\/g, "/"),
+          LATE_SHARE: String(latePercent / 100),
+          ...vars,
+        }).flatMap(
           ([key, value]) => ["-e", `${key}=${value}`],
         ),
         path.join(repoRoot, "load/k6/main.js"),
