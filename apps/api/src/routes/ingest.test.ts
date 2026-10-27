@@ -238,12 +238,77 @@ describe("A2 — 받을 기간 밖과 틀린 이벤트는 이유와 함께 거�
     expect(await stored(pool, ids)).toBe(0);
   });
 
-  it("마이크로초를 담은 시각은 그대로 저장되고, 같은 글자로 다시 보내면 중복이다", async () => {
-    const e = event({ occurredAt: `${iso(Date.now() - MINUTE).slice(0, 19)}.123456Z` });
+  // DESIGN 10장 17: 재전송이 같은 시각을 밀리초로 다시 쓰거나 다른 오프셋으로 써도 같은 키다.
+  it("시각은 밀리초로 잘라 저장하고, 밀리초나 다른 오프셋으로 다시 보내도 중복이다", async () => {
+    const second = iso(Date.now() - MINUTE).slice(0, 19);
+    const e = event({ occurredAt: `${second}.123999Z` });
     expect((await send([e])).body).toMatchObject({ inserted: 1 });
-    expect((await send([e])).body).toMatchObject({ inserted: 0, duplicates: 1 });
+    expect((await send([{ ...e, occurredAt: `${second}.123Z` }])).body).toMatchObject({ inserted: 0, duplicates: 1 });
+    const seoul = new Date(Date.parse(`${second}.123Z`) + 9 * 60 * MINUTE).toISOString().replace("Z", "+09:00");
+    expect((await send([{ ...e, occurredAt: seoul }])).body).toMatchObject({ inserted: 0, duplicates: 1 });
     const { rows } = await pool.query("select to_char(occurred_at, 'US') as us from events where event_id = $1", [e.eventId]);
-    expect(rows).toEqual([{ us: "123456" }]);
+    expect(rows).toEqual([{ us: "123000" }]);
+  });
+
+  it("같은 배치에 같은 eventId가 다른 시각으로 또 있으면 뒤의 것을 거절한다(event_id마다 한 번)", async () => {
+    const e = event();
+    const later = { ...e, occurredAt: iso(Date.parse(e.occurredAt) + 1) };
+    const { body } = await send([e, later, { ...e, eventId: e.eventId.toUpperCase() }]);
+    expect(body).toEqual({
+      received: 3,
+      inserted: 1,
+      duplicates: 1,
+      rejected: [{ index: 1, reason: "invalid", message: expect.stringMatching(/^eventId: 같은 배치의 0번째/) }],
+    });
+    expect(await stored(pool, [e.eventId])).toBe(1);
+  });
+
+  it("오프셋이 ±14:00을 넘으면 그 이벤트만 거절한다(PostgreSQL이 거절해 배치 전체가 실패하지 않게)", async () => {
+    const good = event();
+    const at = Date.now() - MINUTE;
+    const plus16 = new Date(at + 16 * 60 * MINUTE).toISOString().replace("Z", "+16:00");
+    const { status, body } = await send([event({ occurredAt: plus16 }), good]);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ inserted: 1, rejected: [{ index: 0, reason: "invalid" }] });
+  });
+});
+
+describe("겹치는 배치", () => {
+  // 키 순서로 넣지 않으면, 이 요청이 b를 먼저 넣고 a(쥔 쪽)를 기다리는 동안 쥔 쪽이 b를 넣으려다 서로 기다린다(교착, 40P01).
+  it("키 순서로 넣으므로, 다른 트랜잭션이 키를 반대 순서로 넣어도 교착이 나지 않는다", { timeout: 15_000 }, async () => {
+    const [a, b] = [event(), event()].sort((x, y) => (x.eventId < y.eventId ? -1 : 1)) as [ReturnType<typeof event>, ReturnType<typeof event>];
+    const holder = await pool.connect();
+    try {
+      await holder.query("begin");
+      await holder.query("set local lock_timeout = '2s'");
+      const put = (e: typeof a) =>
+        holder.query("insert into events (event_id, occurred_at, user_id, event_name, platform) values ($1, $2, 'other', 'x', 'ios')", [
+          e.eventId,
+          e.occurredAt,
+        ]);
+      await put(a);
+      const pending = send([b, a]);
+      await waitUntil(ingestWaitingOnLock);
+      await put(b);
+      await holder.query("commit");
+      expect((await pending).body).toEqual({ received: 2, inserted: 0, duplicates: 2, rejected: [] });
+    } finally {
+      holder.release();
+    }
+  });
+});
+
+describe("DB에 닿지 않을 때", () => {
+  it("풀에서 연결을 얻지 못하면 503 busy다", async () => {
+    const down = createPool({ connectionString: "postgres://nobody:nothing@127.0.0.1:1/none", connectionTimeoutMillis: 500 });
+    const broken = buildApp(down, {}, { ingestWriteKey: writeKey });
+    try {
+      const res = await post(broken, { events: [event()] });
+      expect(res).toEqual({ status: 503, body: { error: expect.any(String), code: "busy" } });
+    } finally {
+      await broken.close();
+      await down.end();
+    }
   });
 });
 
@@ -275,8 +340,23 @@ describe("봉투와 쓰기 키", () => {
     expect(res).toEqual({ error: expect.any(String) });
   });
 
-  it("본문이 5MiB를 넘으면 413이다", async () => {
-    const big = "x".repeat(5 * 1024 * 1024);
+  it("본문이 6MiB를 넘으면 413이다", async () => {
+    const big = "x".repeat(6 * 1024 * 1024);
     expect((await post(app, { events: [event({ properties: { big } })] })).status).toBe(413);
+  });
+
+  it("보통의 글자로 필드를 꽉 채운 1,000건은 한도 안에 들어가 모두 저장된다", { timeout: 30_000 }, async () => {
+    const full = "가".repeat(128);
+    const hangul = Math.floor((4_096 - 8) / 3);
+    const properties = { k: "가".repeat(hangul) + "a".repeat(4_096 - 8 - hangul * 3) };
+    const events = Array.from({ length: 1_000 }, () =>
+      event({ userId: full, channel: full, campaign: full, eventName: `e${"x".repeat(63)}`, properties }),
+    );
+    const bytes = Buffer.byteLength(JSON.stringify({ events }));
+    expect(bytes).toBeGreaterThan(5 * 1024 * 1024);
+    expect(bytes).toBeLessThan(6 * 1024 * 1024);
+    const { status, body } = await send(events);
+    expect(status).toBe(200);
+    expect(body.inserted).toBe(1_000);
   });
 });

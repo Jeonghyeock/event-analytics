@@ -4,8 +4,8 @@ import type { FastifyPluginAsyncZod } from "fastify-type-provider-zod";
 import type pg from "pg";
 import { IngestUnavailable, ingest } from "../ingest.js";
 
-// 본문 한도. 1,000건 × (properties 4KiB + 나머지 필드)를 넘지 않는다(DESIGN 6.1).
-export const INGEST_BODY_LIMIT = 5 * 1024 * 1024;
+// 본문 한도. 보통의 글자로 꽉 채운 이벤트(한 건 5.6KB쯤) 1,000건이 들어간다. 넘으면 413이고 나눠 보낸다(DESIGN 6.1).
+export const INGEST_BODY_LIMIT = 6 * 1024 * 1024;
 
 const digest = (value: string) => createHash("sha256").update(value).digest();
 
