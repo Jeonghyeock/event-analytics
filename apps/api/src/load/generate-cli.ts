@@ -50,7 +50,7 @@ try {
   let made = 0;
   let inserted = 0;
   const flush = async () => {
-    inserted += await insertEvents(client, pending);
+    inserted += await insertEvents(client, pending, { markDirty: false });
     made += pending.length;
     pending = [];
     if (made % 500_000 < batch) {
@@ -63,6 +63,8 @@ try {
     if (pending.length >= batch) await flush();
   }
   await flush();
+  // 넣은 범위의 시간을 한 번에 더러운 시간으로 적는다(집계 작업이 다시 센다, DESIGN 6.4).
+  await client.query("insert into dirty_hours (hour) select generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour')", [from, to]);
   const sec = (performance.now() - started) / 1000;
   console.log(`끝: ${made.toLocaleString()}건 가운데 새로 ${inserted.toLocaleString()}건, ${sec.toFixed(1)}초(초당 ${Math.round(made / sec).toLocaleString()}건)`);
 } finally {

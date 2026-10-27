@@ -15,6 +15,13 @@
       "when": 1793094300275,
       "tag": "0001_events",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793104878209,
+      "tag": "0002_rollup",
+      "breakpoints": true
     }
   ]
 }

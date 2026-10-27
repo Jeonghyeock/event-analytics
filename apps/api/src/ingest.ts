@@ -48,6 +48,14 @@ const INSERT = `
    order by event_id, occurred_at, ord
   on conflict (event_id, occurred_at) do nothing`;
 
+// 새로 들어간 이벤트의 UTC 시간마다 더러운 시간 행을 덧붙인다(같은 문장, 같은 트랜잭션, DESIGN 6.4).
+// 유일 키가 없어 충돌 확인도 기다림도 없다. 이 트랜잭션이 커밋하기 전에는 집계 작업이 이 행을 보지도 지우지도 못한다.
+const INSERT_MARKING_DIRTY = `
+  with inserted as (${INSERT}
+  returning occurred_at),
+  dirty as (insert into dirty_hours (hour) select distinct date_trunc('hour', occurred_at, 'UTC') from inserted)
+  select count(*)::int as inserted from inserted`;
+
 export async function ingest(pool: pg.Pool, events: unknown[]): Promise<IngestResult> {
   const rejected: Rejected[] = [];
   const valid: { index: number; row: Row }[] = [];
@@ -109,9 +117,15 @@ export async function ingest(pool: pg.Pool, events: unknown[]): Promise<IngestRe
 }
 
 // 검사를 마친 이벤트를 한 문장으로 넣고, 새로 들어간 수를 돌려준다. 생성기가 DB에 바로 넣을 때도 쓴다(같은 키, 같은 순서).
-export async function insertEvents(client: pg.ClientBase, events: (IngestEvent & { at: number })[]) {
+// markDirty: 새로 들어간 이벤트의 시간을 더러운 시간으로 적는다. 생성기는 90일에 흩어진 배치마다 수백 행이 되므로 끄고,
+// 다 넣은 뒤 범위를 한 번에 적는다.
+export async function insertEvents(
+  client: pg.ClientBase,
+  events: (IngestEvent & { at: number })[],
+  { markDirty = true }: { markDirty?: boolean } = {},
+) {
   if (events.length === 0) return 0;
-  const result = await client.query(INSERT, [
+  const result = await client.query<{ inserted: number }>(markDirty ? INSERT_MARKING_DIRTY : INSERT, [
     events.map((e) => e.eventId),
     // 밀리초로 잘라 UTC 글자로 넘긴다. 재전송이 같은 시각을 밀리초로 다시 써도 같은 키가 된다(DESIGN 10장 17).
     events.map((e) => new Date(e.at).toISOString()),
@@ -123,7 +137,7 @@ export async function insertEvents(client: pg.ClientBase, events: (IngestEvent &
     events.map((e) => e.campaign ?? null),
     events.map((e) => JSON.stringify(e.properties ?? {})),
   ]);
-  return result.rowCount ?? 0;
+  return markDirty ? result.rows[0]!.inserted : (result.rowCount ?? 0);
 }
 
 // 파티션이 없으면 23514이고, 부모 표(events) 이름이 붙고 제약 이름이 없다(DESIGN 10장 20).
