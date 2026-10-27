@@ -16,6 +16,7 @@ const FIELD_LABELS: Record<string, string> = {
   startEvent: "시작 이벤트",
   returnEvent: "돌아옴 이벤트",
   days: "며칠째까지",
+  name: "이름",
 };
 
 export function issueMessages(issues: readonly z.core.$ZodIssue[]): string[] {

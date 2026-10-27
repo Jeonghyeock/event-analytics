@@ -3,8 +3,11 @@ import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import type { z } from "zod";
 import { runRetention } from "../api/endpoints";
+import { type OpenedReport, savedErrorHint } from "../api/saved";
 import formStyles from "../components/Form.module.css";
 import { EventSelect, FilterList, RangeFields } from "../components/FormParts";
+import { SaveControls } from "../components/SaveControls";
+import { SavedGate } from "../components/SavedGate";
 import { LoadError, Loading } from "../components/States";
 import tableStyles from "../components/Table.module.css";
 import { lastDays } from "../lib/form";
@@ -23,7 +26,15 @@ export function defaultRetentionForm(now = new Date()): RetentionForm {
 }
 
 export function RetentionPage() {
-  const [query, setQuery] = useState<RetentionQuery | null>(null);
+  return (
+    <SavedGate kind="retention" title="리텐션">
+      {(opened) => <RetentionScreen opened={opened} />}
+    </SavedGate>
+  );
+}
+
+function RetentionScreen({ opened }: { opened: OpenedReport<"retention"> | null }) {
+  const [query, setQuery] = useState<RetentionQuery | null>(opened?.config ?? null);
   // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다)
   const submit = (q: RetentionQuery) => {
     if (query !== null && hashKey(["retention", q]) === hashKey(["retention", query])) void retention.refetch();
@@ -35,18 +46,19 @@ export function RetentionPage() {
     queryFn: async () => ({ query: query!, result: await runRetention(query!) }),
     placeholderData: keepPreviousData,
   });
-  const [initial] = useState(defaultRetentionForm);
+  const [initial] = useState(() => opened?.config ?? defaultRetentionForm());
+  const shown = retention.isSuccess && !retention.isPlaceholderData ? retention.data.query : null;
   return (
     <>
-      <h1>리텐션</h1>
       <RetentionFormView initial={initial} onSubmit={submit} />
+      <SaveControls kind="retention" opened={opened} shown={shown} />
       <section className={styles.result} aria-label="결과" aria-busy={retention.isFetching}>
         {query === null ? (
           <p className={styles.muted}>무리의 기간을 고르고 "보기"를 누르세요.</p>
         ) : retention.isPending ? (
           <Loading />
         ) : retention.isError ? (
-          <LoadError error={retention.error} onRetry={() => void retention.refetch()} />
+          <LoadError error={retention.error} onRetry={() => void retention.refetch()} hint={savedErrorHint(opened, retention.error)} />
         ) : (
           <div className={retention.isPlaceholderData ? styles.stale : undefined}>
             <RetentionTable result={retention.data.result} />

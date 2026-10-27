@@ -1,5 +1,15 @@
-import { FunnelQuery, FunnelResult, ReportQuery, ReportResult, RetentionQuery, RetentionResult } from "@event-analytics/shared";
-import type { z } from "zod";
+import {
+  FunnelQuery,
+  FunnelResult,
+  ReportQuery,
+  ReportResult,
+  RetentionQuery,
+  RetentionResult,
+  SavedReportInput,
+  SavedReportItem,
+  SavedReportList,
+} from "@event-analytics/shared";
+import { z } from "zod";
 import { apiRequest } from "./client";
 
 // 경로마다 하나. 보내기 전에 설정을 공유 스키마로 검사한다(틀린 설정을 서버의 400 전에 화면에서 막고, 기본값을 채운다).
@@ -12,3 +22,15 @@ export const runFunnel = async (q: z.input<typeof FunnelQuery>) =>
 
 export const runRetention = async (q: z.input<typeof RetentionQuery>) =>
   apiRequest("/retention/query", { method: "POST", body: RetentionQuery.parse(q), schema: RetentionResult });
+
+// 저장한 리포트(DESIGN 6.7). 열 때는 목록에서 찾는다(하나만 읽는 경로는 없다).
+export const listSavedReports = async () => apiRequest("/saved-reports", { schema: SavedReportList });
+
+export const createSavedReport = async (input: SavedReportInput) =>
+  apiRequest("/saved-reports", { method: "POST", body: SavedReportInput.parse(input), schema: SavedReportItem });
+
+export const updateSavedReport = async (id: string, input: SavedReportInput) =>
+  apiRequest(`/saved-reports/${id}`, { method: "PUT", body: SavedReportInput.parse(input), schema: SavedReportItem });
+
+// 204의 빈 본문은 undefined로 읽힌다(readJson)
+export const deleteSavedReport = async (id: string) => apiRequest(`/saved-reports/${id}`, { method: "DELETE", schema: z.undefined() });

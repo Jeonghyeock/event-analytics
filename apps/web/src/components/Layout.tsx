@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 import styles from "./Layout.module.css";
+import { SavedList } from "./SavedList";
 
-// 화면 셋(리포트, 퍼널, 리텐션)의 틀(DESIGN 6.7). 저장한 리포트 목록은 저장한 리포트 PR에서 왼쪽에 더한다.
+// 화면 셋(리포트, 퍼널, 리텐션)의 틀(DESIGN 6.7). 저장한 리포트 목록은 왼쪽(좁은 화면에서는 위)에 있다.
 export function Layout() {
   const main = useRef<HTMLElement>(null);
   const location = useLocation();
@@ -34,9 +35,14 @@ export function Layout() {
           <NavLink to="/retention">리텐션</NavLink>
         </nav>
       </header>
-      <main ref={main} tabIndex={-1} className={styles.main}>
-        <Outlet />
-      </main>
+      <div className={styles.columns}>
+        <aside className={styles.aside}>
+          <SavedList />
+        </aside>
+        <main ref={main} tabIndex={-1} className={styles.main}>
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

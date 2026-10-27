@@ -10,7 +10,8 @@ export function Loading({ label = "세는 중…" }: { label?: string }) {
   );
 }
 
-export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+// hint: 화면이 덧붙이는 안내(저장한 리포트의 기간이 보관 기간을 지났을 때 등)
+export function LoadError({ error, onRetry, hint }: { error: unknown; onRetry: () => void; hint?: string | undefined }) {
   const retryable = error instanceof NetworkError || (error instanceof ApiError && error.status === 503);
   const message =
     error instanceof NetworkError
@@ -23,6 +24,7 @@ export function LoadError({ error, onRetry }: { error: unknown; onRetry: () => v
   return (
     <div className={styles.error} role="alert">
       <p>{message}</p>
+      {hint && <p>{hint}</p>}
       {retryable && (
         <button type="button" onClick={onRetry}>
           다시 하기
