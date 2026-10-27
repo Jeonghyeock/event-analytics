@@ -37,10 +37,17 @@ describe("buildReportSql", () => {
     expect(reportSource(query({ timezone: "America/New_York" }))).toBe("rollup");
     expect(reportSource(query({ timezone: "Asia/Kolkata" }))).toBe("raw");
     expect(reportSource(query({ metrics: ["events", "users"] }))).toBe("raw");
-    const { text } = buildReportSql(query(), 10);
+    // 워터마크를 넘기면 집계 표 경로다. 워터마크는 문장 안의 서브쿼리가 아니라 매개변수다(계획할 때 가지를 치게).
+    const wm = new Date("2026-10-24T00:00:00Z");
+    const { text, values } = buildReportSql(query({ filters: [{ dimension: "platform", values: ["ios"] }] }), 10, wm);
     expect(text).toContain("from hourly_rollup where hour >=");
-    expect(text).toContain("least((($2::date + 1)::timestamp at time zone $3::text), (select watermark from rollup_state))");
-    expect(text).toContain("from events where occurred_at >= greatest(");
+    expect(text).toContain("sum(events) as n");
+    expect(text).toContain("least((($2::date + 1)::timestamp at time zone $3::text), $5::timestamptz)");
+    expect(text).toContain("from events where occurred_at >= greatest(($1::date::timestamp at time zone $3::text), $5::timestamptz)");
+    expect(text).not.toContain("rollup_state");
+    expect(values).toEqual(["2026-10-20", "2026-10-26", "Asia/Seoul", ["ios"], wm]);
+    expect(buildReportSql(query(), 10).text).not.toContain("hourly_rollup");
+    expect(() => buildReportSql(query({ metrics: ["users"] }), 10, wm)).toThrow(/집계 표로 셀 수 없는/);
   });
 
   it("고유 사용자는 count(distinct) 없이 (묶음, 차원, 사용자)로 먼저 묶는다", () => {
@@ -73,10 +80,13 @@ describe("만든 SQL이 도는지", () => {
     ["day", ["users"], []],
     ["week", ["events"], ["campaign", "country"]],
     ["total", ["events", "users"], ["event_name"]],
-  ] as const)("%s 단위", async (granularity, metrics, dimensions) => {
+    ["hour", ["events"], ["platform"], "rollup"],
+    ["total", ["events"], [], "rollup"],
+  ] as const)("%s 단위 %s %s %s", async (granularity, metrics, dimensions, path?: "rollup") => {
     const { text, values } = buildReportSql(
       query({ granularity, metrics, dimensions, filters: [{ dimension: "platform", values: ["ios", "web"] }], timezone: "America/New_York" }),
       10,
+      path ? new Date("2026-10-24T00:00:00Z") : undefined,
     );
     await expect(pool.query(text, values)).resolves.toBeDefined();
   });

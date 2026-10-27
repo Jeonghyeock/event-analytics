@@ -42,16 +42,19 @@ try {
     const q = ReportQuery.parse(body);
     const times: number[] = [];
     let rowCount = 0;
+    let watermark: string | null = null;
     for (let i = 0; i <= runs; i++) {
       const started = performance.now();
       const result = await runReport(pool, q, { ...(asOf ? { asOf } : {}), statementTimeout: "120s" });
       times.push(performance.now() - started);
       rowCount = result.meta.rowCount;
+      watermark = result.meta.rollupWatermark;
     }
     const [first, ...rest] = times;
     let plan: string | undefined;
     if (values.explain) {
-      const { text, values: params } = buildReportSql(q, 20_001);
+      // runReport와 같은 SQL(집계 표 경로면 그때 읽은 워터마크로)
+      const { text, values: params } = buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
       const { rows } = await pool.query(`explain (analyze, buffers, costs off, timing off) ${text}`, params);
       plan = rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
     }
