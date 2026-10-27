@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IngestEvent } from "@event-analytics/shared";
 
 // 이벤트 생성기(DESIGN 6.2 "이벤트 생성기", 6.6). 씨앗으로 정해진다. 같은 씨앗과 같은 설정이면 같은 이벤트(event_id까지)가 나온다.
@@ -27,9 +28,10 @@ function weighted<T>(rand: Rand, items: readonly (readonly [T, number])[]): T {
   return items.at(-1)![0];
 }
 
-// UUID v4 모양의 id를 난수에서 만든다(재실행하면 같은 id → 모두 중복).
-function uuid(rand: Rand) {
-  const hex = Array.from({ length: 4 }, () => Math.floor(rand() * 4_294_967_296).toString(16).padStart(8, "0")).join("");
+// UUID v4 모양의 id를 (씨앗, 범위, 순번)의 SHA-256에서 만든다. 같은 설정으로 다시 넣으면 같은 id(→ 모두 중복)이고,
+// 씨앗이나 범위가 다르면 겹치지 않는다. 난수기(32비트 상태)에서 뽑으면 씨앗이 달라도 같은 흐름을 지나 겹칠 수 있다.
+function uuid(key: string, n: number) {
+  const hex = createHash("sha256").update(`${key}:${n}`).digest("hex").slice(0, 32);
   const variant = ((Number.parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16);
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${variant}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
@@ -64,7 +66,9 @@ export type GenerateOptions = {
 
 // 사용자는 소수가 이벤트 대부분을 낸다(번호가 작을수록 자주 나온다). 캠페인도 소수가 대부분을 차지한다(zipf, s = 1).
 export function* generate({ seed, events, from, to, users = 200_000, campaigns = 200 }: GenerateOptions): Generator<IngestEvent> {
-  const rand = random(seed);
+  // 범위도 섞는다. 같은 씨앗이라도 범위가 다르면 다른 이벤트다(같은 id가 다른 시각으로 들어가 두 배가 되지 않게).
+  const key = `${seed}:${from.toISOString()}:${to.toISOString()}`;
+  const rand = random(createHash("sha256").update(key).digest().readUInt32BE(0));
   const zipf = Array.from({ length: campaigns }, (_, i) => [`camp_${String(i + 1).padStart(3, "0")}`, 1 / (i + 1)] as const);
   const days = Math.max(1, Math.round((to.getTime() - from.getTime()) / 86_400_000));
   let made = 0;
@@ -86,7 +90,7 @@ export function* generate({ seed, events, from, to, users = 200_000, campaigns =
       if (made >= events || at >= to.getTime()) break;
       made++;
       yield {
-        eventId: uuid(rand),
+        eventId: uuid(key, made),
         occurredAt: new Date(at).toISOString(),
         userId: `user_${user}`,
         eventName: name,

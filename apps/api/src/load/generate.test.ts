@@ -14,9 +14,12 @@ const sample = (seed: number, events: number) => [...generate({ seed, events, fr
 describe("생성기", () => {
   const events = sample(1, 50_000);
 
-  it("같은 씨앗이면 같은 이벤트(id까지)이고, 씨앗이 다르면 다르다", () => {
+  it("같은 씨앗·같은 범위면 같은 이벤트(id까지)이고, 씨앗이나 범위가 다르면 id가 겹치지 않는다", () => {
     expect(sample(1, 2_000)).toEqual(events.slice(0, 2_000));
-    expect(sample(2, 10)).not.toEqual(events.slice(0, 10));
+    const ids = new Set(events.map((e) => e.eventId));
+    expect(sample(2, 2_000).some((e) => ids.has(e.eventId))).toBe(false);
+    const shifted = [...generate({ seed: 1, events: 2_000, from, to: new Date("2026-10-09T00:00:00Z") })];
+    expect(shifted.some((e) => ids.has(e.eventId))).toBe(false);
   });
 
   it("정확히 그 수만큼, 범위 안의 시각으로, 수집 스키마를 통과하는 이벤트를 만들고 id는 겹치지 않는다", () => {
@@ -38,7 +41,7 @@ describe("생성기", () => {
     for (const e of events) if (e.campaign) byCampaign.set(e.campaign, (byCampaign.get(e.campaign) ?? 0) + 1);
     const sorted = [...byCampaign.values()].sort((a, b) => b - a);
     const total = sorted.reduce((a, b) => a + b, 0);
-    // 200개 가운데 상위 10개가 3분의 1 남짓을 차지한다(s = 1)
+    // 200개 가운데 상위 10개가 절반쯤을 차지한다(s = 1)
     expect(sorted.slice(0, 10).reduce((a, b) => a + b, 0) / total).toBeGreaterThan(0.3);
     expect(events.filter((e) => e.channel === "organic").every((e) => e.campaign === undefined)).toBe(true);
 
