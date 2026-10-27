@@ -82,8 +82,8 @@ describe("A5 — 한국 시각과 UTC의 하루", () => {
       rows: [{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 4, users: 3 }],
       meta: {
         timezone: "Asia/Seoul",
-        from: "2026-10-26T15:00:00.000Z",
-        to: "2026-10-27T15:00:00.000Z",
+        rangeStart: "2026-10-26T15:00:00.000Z",
+        rangeEnd: "2026-10-27T15:00:00.000Z",
         rowCount: 1,
         source: "raw",
         provisional: true,
@@ -148,7 +148,7 @@ describe("A5 — 차원과 필터", () => {
     expect(body.rows).toEqual([{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 1 }]);
   });
 
-  it("users를 고르지 않으면 행에 users가 없다", async () => {
+  it("events를 고르지 않으면 행에 events가 없다", async () => {
     const { body } = await report({ from: "2026-10-27", to: "2026-10-27", granularity: "day", metrics: ["users"], filters: noDst.filters, ...kst });
     expect(body.rows).toEqual([{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, users: 3 }]);
   });
@@ -233,16 +233,21 @@ describe("설정과 실패", () => {
     expect((await report({ from: "2026-10-27", to: "2026-10-27", granularity: "day", ...patch })).status).toBe(400);
   });
 
-  it("행이 한도를 넘으면 잘라 주지 않고 422 too_many_rows다", async () => {
-    const small = buildApp(pool, {}, { reports: { maxRows: 2, asOf } });
+  // 한국 시각 10-27의 플랫폼별은 세 행(android, ios, web)이다. 한도 3이면 받고, 2면 잘라 주지 않는다.
+  it.each([
+    [3, 200],
+    [2, 422],
+  ])("행 한도 %i이면 %i(넘으면 잘라 주지 않고 too_many_rows)", async (maxRows, status) => {
+    const small = buildApp(pool, {}, { reports: { maxRows, asOf } });
     try {
       const res = await small.inject({
         method: "POST",
         url: "/reports/query",
-        payload: { metrics: ["events"], from: "2026-10-27", to: "2026-10-27", granularity: "day", dimensions: ["platform"], ...kst },
+        payload: { metrics: ["events"], from: "2026-10-27", to: "2026-10-27", granularity: "day", dimensions: ["platform"], filters: noDst.filters, ...kst },
       });
-      expect(res.statusCode).toBe(422);
-      expect(res.json()).toEqual({ error: expect.any(String), code: "too_many_rows" });
+      expect(res.statusCode).toBe(status);
+      if (status === 200) expect(res.json().rows).toHaveLength(3);
+      else expect(res.json()).toEqual({ error: expect.any(String), code: "too_many_rows" });
     } finally {
       await small.close();
     }
