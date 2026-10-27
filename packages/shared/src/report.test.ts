@@ -23,6 +23,7 @@ describe("ReportQuery", () => {
     ["허용 목록 밖의 시간대", { timezone: "Asia/Pyongyang" }],
     ["모르는 단위", { granularity: "month" }],
     ["없는 날", { from: "2026-02-30" }],
+    ["0000년(PostgreSQL date가 거절)", { from: "0000-01-01", to: "0000-01-02" }],
     ["from이 to보다 늦음", { from: "2026-11-01" }],
     ["91일", { from: "2026-08-02", to: "2026-10-31" }],
     ["모르는 필드", { limit: 10 }],

@@ -121,12 +121,15 @@ export const TIMEZONES = [
 ] as const;
 // 보관 기간(90일)과 같다. 기간의 시작이 보관 기간보다 앞서면 422 out_of_retention이다.
 export const MAX_REPORT_DAYS = 90;
-// 92일 시간별 × 플랫폼(6,624행), 30일 일별 × 캠페인(6,030행)이 들어간다. 넘으면 잘라 주지 않고 422다.
+// 90일 시간별 × 플랫폼(6,480행), 30일 일별 × 캠페인(6,030행)이 들어간다. 넘으면 잘라 주지 않고 422다.
 export const MAX_REPORT_ROWS = 20_000;
 export type Metric = (typeof METRICS)[number];
 export type Dimension = (typeof DIMENSIONS)[number];
 
 const distinct = <T>(items: T[]) => new Set(items).size === items.length;
+// 날짜의 하한. zod는 0000년도 받지만 PostgreSQL date는 거절해(22008) 500이 된다. 보관 기간보다 훨씬 앞이라 실제로 막는 것은 없다.
+const MIN_REPORT_DATE = "2000-01-01";
+const ReportDate = z.iso.date().refine((d) => d >= MIN_REPORT_DATE, `${MIN_REPORT_DATE} 이후의 날짜입니다`);
 const daysBetween = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
 
 // 리포트 설정. 모든 이름은 허용 목록이고 모르는 필드는 거절한다. SQL에는 코드의 상수 식별자와 매개변수만 들어간다(10장 31~32).
@@ -141,8 +144,8 @@ export const ReportQuery = z
       .refine((filters) => distinct(filters.map((f) => f.dimension)), "같은 차원의 필터가 둘입니다")
       .default([]),
     // 리포트 시간대의 날짜, 둘 다 포함
-    from: z.iso.date(),
-    to: z.iso.date(),
+    from: ReportDate,
+    to: ReportDate,
     granularity: z.enum(GRANULARITIES),
     timezone: z.enum(TIMEZONES).default("Asia/Seoul"),
   })
@@ -171,9 +174,9 @@ export const ReportResult = z.object({
   rows: z.array(ReportRow),
   meta: z.object({
     timezone: z.enum(TIMEZONES),
-    // 기간을 리포트 시간대로 바꾼 순간(UTC ISO): from 이상, to 미만
-    from: z.string(),
-    to: z.string(),
+    // 요청의 from·to(리포트 시간대의 날짜, 둘 다 포함)를 바꾼 순간(UTC ISO): rangeStart 이상, rangeEnd 미만
+    rangeStart: z.string(),
+    rangeEnd: z.string(),
     rowCount: z.number().int(),
     source: z.literal("raw"),
     // 끝이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다(받을 기간 7일)

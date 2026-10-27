@@ -1,4 +1,4 @@
-import type { Dimension, ReportBucket, ReportQuery, ReportRow } from "@event-analytics/shared";
+import type { Dimension, Metric, ReportBucket, ReportQuery, ReportRow } from "@event-analytics/shared";
 
 // 리포트 설정 → SQL(DESIGN 6.3, 10장 31~35). SQL 글자에는 아래 상수 표의 식별자만 들어가고, 설정의 값은 모두 매개변수로 넘긴다.
 
@@ -10,6 +10,9 @@ const COLUMNS: Record<Dimension, string> = {
   channel: "channel",
   campaign: "campaign",
 };
+// 지표 이름 → 집계 식. 고유 사용자 수는 묶음마다 원본에서 정확히 센다(가장 비싼 부분이라 요청할 때만).
+const METRIC_SQL: Record<Metric, string> = { events: "count(*)", users: "count(distinct user_id)" };
+const METRIC_ALIAS: Record<Metric, string> = { events: "m_events", users: "m_users" };
 // 묶음 단위와 벽시계 글자 모양. total은 기간 전체가 한 묶음이다.
 const UNITS = { hour: "hour", day: "day", week: "week" } as const;
 const STEPS = { hour: "1 hour", day: "1 day", week: "1 week" } as const;
@@ -20,8 +23,9 @@ export type ReportSql = { text: string; values: unknown[] };
 // $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록.
 // 기간: 리포트 시간대의 from 0시 이상, to 다음 날 0시 미만. at time zone과 3인자 date_trunc는 immutable이라
 // 매개변수여도 계획할 때 상수가 되어 가지를 친다(이름 없는 문장, 10장 26).
-const START = "($1::date::timestamp at time zone $3::text)";
-const END = "(($2::date + 1)::timestamp at time zone $3::text)";
+// 기간: 리포트 시간대의 from 0시 이상, to 다음 날 0시 미만($1 from, $2 to, $3 시간대). 리포트 실행(run.ts)도 이 식을 쓴다.
+export const START = "($1::date::timestamp at time zone $3::text)";
+export const END = "(($2::date + 1)::timestamp at time zone $3::text)";
 
 export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
   const values: unknown[] = [q.from, q.to, q.timezone];
@@ -29,11 +33,8 @@ export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
   const end = END;
   const bucket = q.granularity === "total" ? start : `date_trunc('${UNITS[q.granularity]}', occurred_at, $3::text)`;
   const dims = q.dimensions.map((d, i) => `${COLUMNS[d]} as d${i}`);
-  const metrics = [
-    ...(q.metrics.includes("events") ? ["count(*) as events"] : []),
-    // 고유 사용자 수는 묶음마다 원본에서 정확히 센다. 요청하지 않으면 세지 않는다(가장 비싼 부분).
-    ...(q.metrics.includes("users") ? ["count(distinct user_id) as users"] : []),
-  ];
+  // 요청한 지표만 센다. 열 이름도 상수 표에서 온다(설정의 글자를 SQL에 넣지 않는다).
+  const metrics = q.metrics.map((m) => `${METRIC_SQL[m]} as ${METRIC_ALIAS[m]}`);
   const where = [`occurred_at >= ${start}`, `occurred_at < ${end}`];
   // null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다).
   for (const f of q.filters) {
@@ -51,7 +52,7 @@ export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
   const dimCols = q.dimensions.map((_, i) => `d${i}`);
   const label = q.granularity === "total" ? "null::text" : `to_char(bucket at time zone $3::text, '${LABELS[q.granularity]}')`;
   const text = [
-    `select bucket, ${label} as label${dimCols.map((c) => `, ${c}`).join("")}${q.metrics.map((m) => `, ${m}`).join("")}`,
+    `select bucket, ${label} as label${dimCols.map((c) => `, ${c}`).join("")}${q.metrics.map((m) => `, ${METRIC_ALIAS[m]}`).join("")}`,
     "from (",
     `  select ${[`${bucket} as bucket`, ...dims, ...metrics].join(", ")}`,
     "  from events",
@@ -64,7 +65,7 @@ export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
   return { text, values };
 }
 
-type RawRow = { bucket: Date; label: string | null; events?: number; users?: number } & Record<string, unknown>;
+type RawRow = { bucket: Date; label: string | null; m_events?: number; m_users?: number } & Record<string, unknown>;
 
 // 결과 행 → 응답 행. 요청한 지표만 싣는다. total의 label은 기간 글자다.
 export function toReportRows(q: ReportQuery, rows: RawRow[]): ReportRow[] {
@@ -72,8 +73,8 @@ export function toReportRows(q: ReportQuery, rows: RawRow[]): ReportRow[] {
     bucket: r.bucket.toISOString(),
     label: r.label ?? `${q.from} ~ ${q.to}`,
     dimensions: Object.fromEntries(q.dimensions.map((d, i) => [d, (r[`d${i}`] as string | null) ?? null])),
-    ...(q.metrics.includes("events") ? { events: Number(r.events) } : {}),
-    ...(q.metrics.includes("users") ? { users: Number(r.users) } : {}),
+    ...(q.metrics.includes("events") ? { events: Number(r.m_events) } : {}),
+    ...(q.metrics.includes("users") ? { users: Number(r.m_users) } : {}),
   }));
 }
 

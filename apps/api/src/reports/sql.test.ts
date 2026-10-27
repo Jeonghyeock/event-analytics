@@ -34,7 +34,7 @@ describe("buildReportSql", () => {
 
   it("users를 고르지 않으면 count(distinct)를 하지 않는다", () => {
     expect(buildReportSql(query(), 10).text).not.toContain("count(distinct");
-    expect(buildReportSql(query({ metrics: ["users"] }), 10).text).toContain("count(distinct user_id) as users");
+    expect(buildReportSql(query({ metrics: ["users"] }), 10).text).toContain("count(distinct user_id) as m_users");
   });
 
   it("차원은 상수 표의 열 이름으로 묶는다", () => {
