@@ -29,11 +29,12 @@ export const reportSource = (q: ReportQuery): ReportSource =>
 // immutable이라 매개변수여도 계획할 때 상수가 되어 가지를 친다(이름 없는 문장, 10장 26). 리포트 실행(run.ts)도 이 식을 쓴다.
 export const START = "($1::date::timestamp at time zone $3::text)";
 export const END = "(($2::date + 1)::timestamp at time zone $3::text)";
-// 집계 표의 워터마크. 한 문장 안에서 읽어 집계 표 부분·원본 부분과 한 스냅샷이다(10장 40).
-const WATERMARK = "(select watermark from rollup_state)";
 
 // $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록. 열 이름은 상수 표에서만 온다(설정의 글자를 SQL에 넣지 않는다).
-export function buildReportSql(q: ReportQuery, limit: number, source: ReportSource = reportSource(q)): ReportSql {
+// rollupWatermark: 있으면 집계 표 경로다(reportSource가 rollup일 때만 넘긴다). 리포트 트랜잭션(반복 읽기)에서 먼저 읽어
+// 매개변수로 넘긴다. 같은 문장의 서브쿼리로 읽으면 계획할 때 값을 몰라 가지를 치지 못한다(하루 리포트도 파티션 91개를 계획, 코드 리뷰).
+export function buildReportSql(q: ReportQuery, limit: number, rollupWatermark?: Date): ReportSql {
+  if (rollupWatermark && reportSource(q) !== "rollup") throw new Error("집계 표로 셀 수 없는 리포트입니다");
   const values: unknown[] = [q.from, q.to, q.timezone];
   // null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다). 집계 표에도 같은 열이 있다.
   const filters: string[] = [];
@@ -57,15 +58,19 @@ export function buildReportSql(q: ReportQuery, limit: number, source: ReportSour
   const wantsEvents = q.metrics.includes("events");
 
   let inner: string;
-  if (source === "rollup") {
-    // [시작, min(끝, 워터마크))는 집계 표, [max(시작, 워터마크), 끝)는 원본. 두 부분을 합쳐 다시 묶는다.
+  if (rollupWatermark) {
+    values.push(rollupWatermark);
+    const wm = `$${values.length}::timestamptz`;
+    // [시작, min(끝, 워터마크))는 집계 표, [max(시작, 워터마크), 끝)는 원본. 두 부분을 각각 묶은 뒤 합쳐 다시 묶는다.
+    // 집계 표 쪽도 먼저 묶는다. 행 그대로 합치면 기간의 집계 행을 모두 정렬한다(90일이면 385만 행, 코드 리뷰).
     inner = [
       `select bucket${dimCols.map((c) => `, ${c}`).join("")}, sum(n) as m_events from (`,
-      `  select ${[`${bucketOf("hour")} as bucket`, ...dims, "events as n"].join(", ")}`,
-      `  from hourly_rollup where ${where("hour", START, `least(${END}, ${WATERMARK})`)}`,
+      `  select ${[`${bucketOf("hour")} as bucket`, ...dims, "sum(events) as n"].join(", ")}`,
+      `  from hourly_rollup where ${where("hour", START, `least(${END}, ${wm})`)}`,
+      `  group by ${groupBy()}`,
       "  union all",
       `  select ${[`${bucketOf("occurred_at")} as bucket`, ...dims, "count(*) as n"].join(", ")}`,
-      `  from events where ${where("occurred_at", `greatest(${START}, ${WATERMARK})`, END)}`,
+      `  from events where ${where("occurred_at", `greatest(${START}, ${wm})`, END)}`,
       `  group by ${groupBy()}`,
       `) u group by ${groupBy()}`,
     ].join("\n");
@@ -95,13 +100,11 @@ export function buildReportSql(q: ReportQuery, limit: number, source: ReportSour
   return { text, values };
 }
 
-// 집계 표 경로의 상태: 워터마크와, 기간 안·워터마크 앞에 아직 다시 세지 않은 더러운 시간이 있는지(meta.stale).
-export function buildRollupMetaSql(q: ReportQuery): ReportSql {
+// 집계 표 경로의 meta.stale: 기간 안·워터마크 앞에 아직 다시 세지 않은 더러운 시간이 있는가.
+export function buildStaleSql(q: ReportQuery, watermark: Date): ReportSql {
   return {
-    text: `select ${WATERMARK} as watermark,
-                  exists (select 1 from dirty_hours where hour >= ${START} and hour < least(${END}, ${WATERMARK})) as stale,
-                  $2::date as "to"`,
-    values: [q.from, q.to, q.timezone],
+    text: `select exists (select 1 from dirty_hours where hour >= ${START} and hour < least(${END}, $4::timestamptz)) as stale`,
+    values: [q.from, q.to, q.timezone, watermark],
   };
 }
 

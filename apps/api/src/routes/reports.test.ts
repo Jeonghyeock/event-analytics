@@ -1,3 +1,4 @@
+import type { ReportQuery } from "@event-analytics/shared";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../../test/fresh-database.js";
@@ -30,7 +31,8 @@ beforeAll(async () => {
   try {
     for (const [from, to] of [
       ["2027-03-14", "2027-03-15"],
-      ["2026-10-26", "2026-11-04"],
+      // 10-24·10-25는 비어 있지만, 가지치기가 기간의 아래 끝도 지키는지 보려고 만든다
+      ["2026-10-24", "2026-11-04"],
     ] as const) {
       await createDailyPartitions(owner, from, to, { retryDelaysMs: [] });
     }
@@ -283,11 +285,8 @@ describe("설정과 실패", () => {
     }
   });
 
-  it("리포트 SQL은 한국 시각 하루에 파티션 둘만 읽는다(가지치기, A3)", async () => {
-    const { text, values } = buildReportSql(
-      { metrics: ["events"], dimensions: [], filters: [], from: "2026-10-27", to: "2026-10-27", granularity: "day", timezone: "Asia/Seoul" },
-      10,
-    );
+  // 계획에 남은 표 이름. EXPLAIN은 실행하지 않으므로, 계획할 때(매개변수 값으로) 가지를 친 것만 빠진다.
+  const planned = async (text: string, values: unknown[]) => {
     const { rows } = await pool.query(`explain (format json, costs off) ${text}`, values);
     const names = new Set<string>();
     const walk = (n: { "Relation Name"?: string; Plans?: unknown[] }) => {
@@ -295,8 +294,21 @@ describe("설정과 실패", () => {
       (n.Plans as (typeof n)[] | undefined)?.forEach(walk);
     };
     walk(rows[0]["QUERY PLAN"][0].Plan);
-    // 이벤트만 묻는 리포트라 집계 표 경로다(집계 표와 상태 표도 읽는다). 원본 파티션은 그 둘만이다.
-    expect([...names].filter((n) => n.startsWith("events_p")).sort()).toEqual(["events_p20261026", "events_p20261027"]);
+    return names;
+  };
+  const kstDay: ReportQuery = { metrics: ["events"], dimensions: [], filters: [], from: "2026-10-27", to: "2026-10-27", granularity: "day", timezone: "Asia/Seoul" };
+  const partitions = (names: Set<string>) => [...names].filter((n) => n.startsWith("events_p")).sort();
+
+  it("리포트 SQL은 한국 시각 하루에 파티션 둘만 읽는다(앞뒤 파티션 10-25·10-28은 계획에서 빠진다, 가지치기, A3)", async () => {
+    const { text, values } = buildReportSql(kstDay, 10);
+    expect(partitions(await planned(text, values))).toEqual(["events_p20261026", "events_p20261027"]);
+  });
+
+  it("집계 표 경로의 원본 꼬리는 워터마크부터의 파티션만 계획한다(워터마크가 매개변수라서)", async () => {
+    // 한국 시각 10-27 = UTC 10-26 15:00 ~ 10-27 15:00. 워터마크 10-27 03:00 → 원본 꼬리는 UTC 10-27 파티션 하나다.
+    const { text, values } = buildReportSql(kstDay, 10, new Date("2026-10-27T03:00:00Z"));
+    const names = await planned(text, values);
+    expect(partitions(names)).toEqual(["events_p20261027"]);
     expect(names.has("hourly_rollup")).toBe(true);
   });
 });

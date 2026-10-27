@@ -1,7 +1,7 @@
 import { MAX_REPORT_ROWS, type ReportQuery, type ReportResult } from "@event-analytics/shared";
 import type pg from "pg";
 import { RETENTION_DAYS } from "../db/partitions.js";
-import { buildBucketsSql, buildReportSql, buildRollupMetaSql, END, reportSource, START, toReportBuckets, toReportRows } from "./sql.js";
+import { buildBucketsSql, buildReportSql, buildStaleSql, END, reportSource, START, toReportBuckets, toReportRows } from "./sql.js";
 
 // 리포트를 돌린다(DESIGN 6.3, 10장 35). 읽기 전용 트랜잭션에서 문장 30초, 잠금 대기 3초로 묶는다(트랜잭션 안에서만).
 
@@ -37,21 +37,24 @@ export async function runReport(
       statementTimeout,
       lockTimeout,
     ]);
-    // 기간을 리포트 시간대로 바꾼 순간, 보관 기간의 시작(UTC 날짜로 90일 전 0시), 끝이 최근 7일 안인지(늦은 이벤트가 더 온다).
-    const range = await client.query<{ from: Date; to: Date; retained_from: Date; provisional: boolean }>(
+    // 기간을 리포트 시간대로 바꾼 순간, 보관 기간의 시작(UTC 날짜로 90일 전 0시), 끝이 최근 7일 안인지(늦은 이벤트가 더 온다),
+    // 집계 표의 워터마크. 워터마크는 여기서 읽어 리포트 문장에 매개변수로 넘긴다(반복 읽기라 같은 스냅샷이고, 계획할 때 가지를 친다).
+    const range = await client.query<{ from: Date; to: Date; retained_from: Date; provisional: boolean; watermark: Date | null }>(
       `select ${START} as "from", ${END} as "to",
               ((coalesce($4::timestamptz, now()) at time zone 'UTC')::date - $5::int)::timestamp at time zone 'UTC' as retained_from,
-              ${END} > coalesce($4::timestamptz, now()) - interval '7 days' as provisional`,
+              ${END} > coalesce($4::timestamptz, now()) - interval '7 days' as provisional,
+              (select watermark from rollup_state) as watermark`,
       [q.from, q.to, q.timezone, asOf ?? null, RETENTION_DAYS],
     );
-    const { from, to, retained_from: retainedFrom, provisional } = range.rows[0]!;
+    const { from, to, retained_from: retainedFrom, provisional, watermark } = range.rows[0]!;
     // 조용히 0을 주면 "그때는 이벤트가 없었다"로 읽힌다. 시작 날이 일부만 남은 경우도 거절한다.
     if (from < retainedFrom) {
       throw new ReportFailed("out_of_retention", `보관 기간(90일) 밖입니다. 기간의 시작은 ${retainedFrom.toISOString()} 이후여야 합니다`);
     }
+    // 기간이 워터마크에서(또는 뒤에서) 시작하면 집계 표 부분이 비어 원본만 센다. 상태 행이 없으면(집계 작업이 오류를 남긴다) 원본으로 센다.
+    const source = !forceRaw && watermark && watermark > from ? reportSource(q) : "raw";
     // 잘라 주지 않는다(잘린 표를 전체로 오해하지 않게). 하나 더 읽어 넘는지 본다.
-    const source = forceRaw ? "raw" : reportSource(q);
-    const { text, values } = buildReportSql(q, maxRows + 1, source);
+    const { text, values } = buildReportSql(q, maxRows + 1, source === "rollup" ? watermark! : undefined);
     const { rows } = await client.query(text, values);
     if (rows.length > maxRows) {
       throw new ReportFailed("too_many_rows", `행이 ${maxRows}개를 넘습니다. 기간이나 차원을 줄이세요`);
@@ -59,10 +62,9 @@ export async function runReport(
     let rollupWatermark: string | null = null;
     let stale = false;
     if (source === "rollup") {
-      const meta = buildRollupMetaSql(q);
-      const r = (await client.query<{ watermark: Date; stale: boolean }>(meta.text, meta.values)).rows[0]!;
-      rollupWatermark = r.watermark.toISOString();
-      stale = r.stale;
+      const staleSql = buildStaleSql(q, watermark!);
+      stale = (await client.query<{ stale: boolean }>(staleSql.text, staleSql.values)).rows[0]!.stale;
+      rollupWatermark = watermark!.toISOString();
     }
     const buckets = buildBucketsSql(q);
     const bucketRows = (await client.query(buckets.text, buckets.values)).rows;
