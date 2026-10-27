@@ -296,3 +296,41 @@ export const RetentionResult = z.object({
   }),
 });
 export type RetentionResult = z.infer<typeof RetentionResult>;
+
+// ── 저장한 리포트(DESIGN 6.7) ──
+
+export const SAVED_REPORT_KINDS = ["report", "funnel", "retention"] as const;
+export type SavedReportKind = (typeof SAVED_REPORT_KINDS)[number];
+// kind마다 설정의 스키마. 저장할 때와 열 때 모두 이것으로 검사한다(10장 52).
+export const SAVED_REPORT_CONFIGS = { report: ReportQuery, funnel: FunnelQuery, retention: RetentionQuery } as const;
+
+// 이름은 앞뒤 공백을 자르고 100자까지(NUL·짝 없는 서로게이트 거절). 종류가 달라도 유일하다.
+const SavedReportName = z.string().trim().min(1, "이름을 쓰세요").max(100).refine(storable, STORABLE_MESSAGE);
+
+// 저장할 때의 본문. config는 kind의 스키마로 검사하고, 저장하는 것은 검사를 거친 값(기본값이 채워진 것)이다.
+export const SavedReportInput = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("report"), name: SavedReportName, config: ReportQuery }),
+  z.strictObject({ kind: z.literal("funnel"), name: SavedReportName, config: FunnelQuery }),
+  z.strictObject({ kind: z.literal("retention"), name: SavedReportName, config: RetentionQuery }),
+]);
+export type SavedReportInput = z.infer<typeof SavedReportInput>;
+
+// 목록의 항목. config는 그대로 주고 valid로 지금의 스키마에 맞는지 알린다. 응답을 kind별로 엄격하게 적으면
+// 맞지 않는 옛 설정 하나 때문에 목록 전체가 500이 된다(응답도 스키마로 직렬화한다, 설계 리뷰).
+export const SavedReport = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(SAVED_REPORT_KINDS),
+  config: z.unknown(),
+  valid: z.boolean(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SavedReport = z.infer<typeof SavedReport>;
+
+export const SavedReportList = z.object({ items: z.array(SavedReport) });
+export const SavedReportItem = z.object({ item: SavedReport });
+export const SavedReportParams = z.strictObject({ id: z.uuid("저장한 리포트의 id가 아닙니다") });
+
+// 409 name_taken(이름이 겹침), 404 not_found(없는 id)
+export const SavedReportFailure = z.object({ error: z.string(), code: z.enum(["name_taken", "not_found"]) });
