@@ -16,6 +16,22 @@ export class ReportFailed extends Error {
 
 export type QueryLimits = { statementTimeout?: string; lockTimeout?: string };
 
+// 리포트 종류마다 계획을 바꾸는 설정. 트랜잭션 안에서만 건다(set_config(…, true)). API의 실행 함수와 진단 도구(load:report-bench의
+// EXPLAIN)가 같은 함수를 불러, 7단계의 고침으로 더한 설정이 진단 계획에도 걸린다(DESIGN 6.8).
+export type ReportKind = "report" | "funnel" | "retention";
+
+export async function applyPlannerSettings(client: pg.PoolClient, kind: ReportKind) {
+  if (kind === "funnel" || kind === "retention") {
+    // 중첩 반복 조인을 끈다(10장 47). 원본에 user_id 인덱스가 없어 중첩 반복은 단계 이벤트를 바깥 행마다 다시 훑는다.
+    // 퍼널: 계획기는 통계와 상관없이 그것을 고를 수 있다. 조인 조건의 전환 기간 범위(t > 앞 단계, t < t1 + 기간)에 기본 선택도를 써서
+    // 2단계부터를 1행쯤으로 어림하기 때문이다. 통계가 다 있는 개발 DB에서도 좁은 필터 퍼널이 켜면 61초, 끄면 0.4초였고(코드 리뷰),
+    // 통계가 없는 새 DB에서는 진입 사용자를 8명으로 어림해 3만 건에 39초였다(끄면 31ms). ANALYZE로는 고쳐지지 않는다.
+    // 리텐션: 같은 위험에 대비해 끈다. 안쪽이 원본이 아니라 미리 묶은 돌아옴(b)이라, 개발 DB와 통계 없는 DB의 14가지 모양에서
+    // 계획이 켜도 꺼도 같았다(병합·해시 조인, 코드 리뷰). user_id 인덱스를 더하면 이 설정을 다시 본다(그 인덱스가 여는 계획을 막는다).
+    await client.query("select set_config('enable_nestloop', 'off', true)");
+  }
+}
+
 export async function inReportTransaction<T>(
   pool: pg.Pool,
   { statementTimeout = "30s", lockTimeout = "3s" }: QueryLimits,

@@ -16,13 +16,16 @@ const { values } = parseArgs({
     "end-day": { type: "string" },
     seed: { type: "string", default: "1" },
     batch: { type: "string", default: "1000" },
+    // 사용자 수. 이벤트를 늘릴 때 함께 늘려야 사용자당 활동이 같다(5,000만 건은 100만 명, DESIGN 6.8 "5,000만 건").
+    users: { type: "string", default: "200000" },
   },
 });
 const events = Number(values.events);
 const days = Number(values.days);
 const seed = Number(values.seed);
 const batch = Number(values.batch);
-for (const [name, n] of [["events", events], ["days", days], ["seed", seed], ["batch", batch]] as const) {
+const users = Number(values.users);
+for (const [name, n] of [["events", events], ["days", days], ["seed", seed], ["batch", batch], ["users", users]] as const) {
   if (!Number.isSafeInteger(n) || n < 1) throw new Error(`--${name}는 1 이상의 정수입니다`);
 }
 
@@ -59,7 +62,7 @@ try {
     }
   };
   try {
-    for (const event of generate({ seed, events, from, to })) {
+    for (const event of generate({ seed, events, from, to, users })) {
       pending.push({ ...event, at: Date.parse(event.occurredAt) });
       if (pending.length >= batch) await flush();
     }

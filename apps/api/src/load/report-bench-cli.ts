@@ -9,13 +9,17 @@ import { runRetention } from "../reports/retention-run.js";
 import { buildRetentionSql } from "../reports/retention-sql.js";
 import { runReport } from "../reports/run.js";
 import { buildReportSql, type ReportSql } from "../reports/sql.js";
+import { applyPlannerSettings, inReportTransaction, type ReportKind } from "../reports/transaction.js";
 import { FUNNEL } from "./generate.js";
+import { MIX_TIMEZONE, reportMix, todayIn } from "./mix.js";
 
-// 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 3·4·5·7단계 기록). API와 같은 길(runReport, runFunnel, runRetention)로 개발 DB에서 센다.
-// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS)도
-// 남긴다(계획기의 어림을 보게 비용도 켠다). --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
-// --kind로 리포트·퍼널·리텐션 가운데 하나를 고른다.
-//   npm run load:report-bench -w @event-analytics/api -- --runs 3 --as-of 2026-10-27T12:00:00Z --explain [--raw] [--kind funnels]
+// 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 3·4·5·7단계 기록). API와 같은 길(runReport, runFunnel, runRetention)로 센다.
+// 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS, COSTS, TIMING)도
+// 남긴다. EXPLAIN은 API와 같은 트랜잭션 틀(inReportTransaction)과 같은 계획 설정(applyPlannerSettings)으로 돌아, 7단계의 고침으로
+// 더한 SET LOCAL이 계획에도 걸린다(DESIGN 6.8). --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
+// --kind로 리포트·퍼널·리텐션·S2 묶음(mix) 가운데 하나를 고른다. 문장 한도는 API와 같은 30초다(API라면 503이 날 것을 끝까지 돌리지 않게).
+// 7단계에서는 진단에만 쓴다(부하 중 계획). 머리 숫자(p95)는 HTTP로 잰다. 주소를 바꾸려면 DATABASE_URL을 준다(측정 복제본 등).
+//   npm run load:report-bench -w @event-analytics/api -- --runs 3 --as-of 2026-10-27T12:00:00Z --explain [--raw] [--kind funnels|mix]
 const { values } = parseArgs({
   options: {
     runs: { type: "string", default: "3" },
@@ -72,37 +76,39 @@ const RETENTIONS: Record<string, unknown> = {
   "무리 7일, 7일째까지, 선점 → 결제": { days: 7, startEvent: "seats_held", returnEvent: "payment_succeeded", from: "2026-10-13", to: "2026-10-19", ...kst },
 };
 
-// 한 번 돌리고, 계획을 볼 SQL을 만드는 함수(그 실행이 읽은 워터마크·windowEnd로, 잰 시간 밖에서 부름)와 계획에 쓸 설정을 돌려준다.
-type Measured = { source: string; watermark: string | null; rowCount: number; sql: () => ReportSql; nestloopOff: boolean };
-const options = { ...(asOf ? { asOf } : {}), statementTimeout: "120s" };
+// 한 번 돌리고, 계획을 볼 SQL을 만드는 함수(그 실행이 읽은 워터마크·windowEnd로, 잰 시간 밖에서 부름)와 계획 설정의 종류를 돌려준다.
+type Measured = { source: string; watermark: string | null; rowCount: number; sql: () => ReportSql; kind: ReportKind };
+const options = { ...(asOf ? { asOf } : {}), statementTimeout: "30s" };
+const measureReport = async (body: unknown): Promise<Measured> => {
+  const q = ReportQuery.parse(body);
+  const result = await runReport(pool, q, { ...options, forceRaw });
+  const watermark = result.meta.rollupWatermark;
+  const sql = () => buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
+  return { source: result.meta.source, watermark, rowCount: result.meta.rowCount, sql, kind: "report" };
+};
+const measureFunnel = async (body: unknown): Promise<Measured> => {
+  const q = FunnelQuery.parse(body);
+  const result = await runFunnel(pool, q, options);
+  const sql = () => buildFunnelSql(q, new Date(result.meta.windowEnd));
+  return { source: "funnel", watermark: null, rowCount: result.rows.length, sql, kind: "funnel" };
+};
+const measureRetention = async (body: unknown): Promise<Measured> => {
+  const q = RetentionQuery.parse(body);
+  const result = await runRetention(pool, q, options);
+  return { source: "retention", watermark: null, rowCount: result.rows.length, sql: () => buildRetentionSql(q), kind: "retention" };
+};
+// S2 묶음(DESIGN 6.8): 7은 오늘(리포트 시간대)을 읽는다
+const mix = reportMix(todayIn(MIX_TIMEZONE));
+const MIX = Object.fromEntries(mix.map((k) => [`${k.key} ${k.name}`, { path: k.path, body: k.body }]));
+const byPath = { "/reports/query": measureReport, "/funnels/query": measureFunnel, "/retention/query": measureRetention };
 const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise<Measured>]> = {
-  reports: [
-    REPORTS,
-    async (body) => {
-      const q = ReportQuery.parse(body);
-      const result = await runReport(pool, q, { ...options, forceRaw });
-      const watermark = result.meta.rollupWatermark;
-      const sql = () => buildReportSql(q, 20_001, watermark ? new Date(watermark) : undefined);
-      return { source: result.meta.source, watermark, rowCount: result.meta.rowCount, sql, nestloopOff: false };
-    },
-  ],
-  funnels: [
-    FUNNELS,
-    async (body) => {
-      const q = FunnelQuery.parse(body);
-      const result = await runFunnel(pool, q, options);
-      const sql = () => buildFunnelSql(q, new Date(result.meta.windowEnd));
-      return { source: "funnel", watermark: null, rowCount: result.rows.length, sql, nestloopOff: true };
-    },
-  ],
-  retention: [
-    RETENTIONS,
-    async (body) => {
-      const q = RetentionQuery.parse(body);
-      const result = await runRetention(pool, q, options);
-      return { source: "retention", watermark: null, rowCount: result.rows.length, sql: () => buildRetentionSql(q), nestloopOff: true };
-    },
-  ],
+  reports: [REPORTS, measureReport],
+  funnels: [FUNNELS, measureFunnel],
+  retention: [RETENTIONS, measureRetention],
+  mix: [MIX, (item) => {
+    const { path, body } = item as (typeof MIX)[string];
+    return byPath[path](body);
+  }],
 };
 
 const pool = createPool({ connectionString: url, max: 1, application_name: "event-analytics-report-bench" });
@@ -120,21 +126,15 @@ try {
       times.push(performance.now() - started);
     }
     const [first, ...rest] = times;
-    const { source, watermark, rowCount, sql, nestloopOff } = last!;
+    const { source, watermark, rowCount, sql, kind: plannerKind } = last!;
     let plan: string | undefined;
     if (values.explain) {
-      // 러너처럼 퍼널·리텐션은 트랜잭션 안에서 중첩 반복을 끈다(계획을 바꾸는 설정은 이것뿐이다)
-      const client = await pool.connect();
-      try {
-        await client.query("begin read only");
-        if (nestloopOff) await client.query("select set_config('enable_nestloop', 'off', true)");
+      plan = await inReportTransaction(pool, { statementTimeout: "30s" }, async (client) => {
+        await applyPlannerSettings(client, plannerKind);
         const { text, values: params } = sql();
-        const { rows } = await client.query(`explain (analyze, buffers, timing off) ${text}`, params);
-        plan = rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
-        await client.query("commit");
-      } finally {
-        client.release();
-      }
+        const { rows } = await client.query(`explain (analyze, buffers, costs, timing) ${text}`, params);
+        return rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
+      });
     }
     const r = { name, source, watermark, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
     console.log(`${name}(${source}): 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
@@ -146,5 +146,5 @@ try {
 const dir = fileURLToPath(new URL("../../../../load/results/", import.meta.url));
 mkdirSync(dir, { recursive: true });
 const file = `${dir}${kind === "reports" ? "report" : kind}-bench-${new Date().toISOString().replaceAll(":", "-")}.json`;
-writeFileSync(file, JSON.stringify({ kind, runs, asOf, forceRaw, results }, null, 2));
+writeFileSync(file, JSON.stringify({ kind, runs, asOf, forceRaw, database: new URL(url).pathname.slice(1), results }, null, 2));
 console.log(`결과: ${file}`);

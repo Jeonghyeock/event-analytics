@@ -2,7 +2,7 @@ import { MAX_REPORT_ROWS, type ReportQuery, type ReportResult } from "@event-ana
 import type pg from "pg";
 import { RETENTION_DAYS } from "../db/partitions.js";
 import { buildBucketsSql, buildReportSql, buildStaleSql, END, reportSource, START, toReportBuckets, toReportRows } from "./sql.js";
-import { checkRetention, inReportTransaction, type QueryLimits, ReportFailed, retainedFromSql } from "./transaction.js";
+import { applyPlannerSettings, checkRetention, inReportTransaction, type QueryLimits, ReportFailed, retainedFromSql } from "./transaction.js";
 
 // 리포트를 돌린다(DESIGN 6.3, 10장 35). 트랜잭션 틀(읽기 전용 반복 읽기, 문장 30초, 잠금 대기 3초)은 transaction.ts가 연다.
 
@@ -17,6 +17,7 @@ export function runReport(
 ): Promise<ReportResult> {
   // 반복 읽기: 행·묶음·워터마크·stale을 한 스냅샷에서 본다.
   return inReportTransaction(pool, limits, async (client) => {
+    await applyPlannerSettings(client, "report");
     // 기간을 리포트 시간대로 바꾼 순간, 보관 기간의 시작(UTC 날짜로 90일 전 0시), 끝이 최근 7일 안인지(늦은 이벤트가 더 온다),
     // 집계 표의 워터마크. 워터마크는 여기서 읽어 리포트 문장에 매개변수로 넘긴다(반복 읽기라 같은 스냅샷이고, 계획할 때 가지를 친다).
     // as_of: 판단에 쓴 "지금"(트랜잭션 안의 now()는 트랜잭션의 시작 시각이라 한 응답 안에서 같다). 화면이 진행 중인 묶음을 가린다.
