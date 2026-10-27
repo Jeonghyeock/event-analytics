@@ -8,16 +8,19 @@ import { buildReportSql } from "../reports/sql.js";
 
 // 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 4단계와 7단계의 "전"). API와 같은 길(runReport)로 개발 DB에서 센다.
 // 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS)도 남긴다.
+// --raw면 집계 표를 쓸 수 있는 리포트도 원본으로 센다(4단계의 전후 비교).
 //   npm run load:report-bench -w @event-analytics/api -- --runs 3 --as-of 2026-10-27T12:00:00Z
 const { values } = parseArgs({
   options: {
     runs: { type: "string", default: "3" },
     "as-of": { type: "string" },
     explain: { type: "boolean", default: false },
+    raw: { type: "boolean", default: false },
   },
 });
 const runs = Number(values.runs);
 const asOf = values["as-of"];
+const forceRaw = values.raw;
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL이 없습니다(.env 또는 환경 변수)");
@@ -30,7 +33,9 @@ const REPORTS: Record<string, unknown> = {
   "30일 일별, 이벤트 + 사용자": { metrics: ["events", "users"], granularity: "day", ...last30, ...kst },
   "90일 캠페인별 합계, 이벤트": { metrics: ["events"], granularity: "total", dimensions: ["campaign"], ...last90, ...kst },
   "90일 캠페인별 합계, 이벤트 + 사용자": { metrics: ["events", "users"], granularity: "total", dimensions: ["campaign"], ...last90, ...kst },
+  "7일 시간별 × 플랫폼, 이벤트": { metrics: ["events"], granularity: "hour", dimensions: ["platform"], from: "2026-10-20", to: "2026-10-26", ...kst },
   "7일 시간별 × 플랫폼, 이벤트 + 사용자": { metrics: ["events", "users"], granularity: "hour", dimensions: ["platform"], from: "2026-10-20", to: "2026-10-26", ...kst },
+  "하루 시간별, 이벤트": { metrics: ["events"], granularity: "hour", from: "2026-10-26", to: "2026-10-26", ...kst },
   "하루 시간별, 이벤트 + 사용자": { metrics: ["events", "users"], granularity: "hour", from: "2026-10-26", to: "2026-10-26", ...kst },
 };
 
@@ -43,12 +48,14 @@ try {
     const times: number[] = [];
     let rowCount = 0;
     let watermark: string | null = null;
+    let source = "";
     for (let i = 0; i <= runs; i++) {
       const started = performance.now();
-      const result = await runReport(pool, q, { ...(asOf ? { asOf } : {}), statementTimeout: "120s" });
+      const result = await runReport(pool, q, { ...(asOf ? { asOf } : {}), statementTimeout: "120s", forceRaw });
       times.push(performance.now() - started);
       rowCount = result.meta.rowCount;
       watermark = result.meta.rollupWatermark;
+      source = result.meta.source;
     }
     const [first, ...rest] = times;
     let plan: string | undefined;
@@ -58,8 +65,8 @@ try {
       const { rows } = await pool.query(`explain (analyze, buffers, costs off, timing off) ${text}`, params);
       plan = rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
     }
-    const r = { name, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
-    console.log(`${name}: 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
+    const r = { name, source, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
+    console.log(`${name}(${source}): 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
     results.push(r);
   }
 } finally {
@@ -68,5 +75,5 @@ try {
 const dir = fileURLToPath(new URL("../../../../load/results/", import.meta.url));
 mkdirSync(dir, { recursive: true });
 const file = `${dir}report-bench-${new Date().toISOString().replaceAll(":", "-")}.json`;
-writeFileSync(file, JSON.stringify({ runs, asOf, results }, null, 2));
+writeFileSync(file, JSON.stringify({ runs, asOf, forceRaw, results }, null, 2));
 console.log(`결과: ${file}`);
