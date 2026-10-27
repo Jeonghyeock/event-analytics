@@ -7,6 +7,7 @@ import type { ReportOptions } from "./reports/run.js";
 import { funnelRoutes } from "./routes/funnels.js";
 import { ingestRoutes } from "./routes/ingest.js";
 import { reportRoutes } from "./routes/reports.js";
+import { retentionRoutes } from "./routes/retention.js";
 
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
 // ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
@@ -54,6 +55,7 @@ export function buildApp(
   app.register(ingestRoutes, { pool, writeKey: services.ingestWriteKey ?? randomBytes(32).toString("hex") });
   app.register(reportRoutes, { pool: services.reportPool ?? pool, options: services.reports });
   app.register(funnelRoutes, { pool: services.reportPool ?? pool, options: services.reports });
+  app.register(retentionRoutes, { pool: services.reportPool ?? pool, options: services.reports });
 
   return app;
 }
