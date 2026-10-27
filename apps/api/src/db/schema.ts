@@ -27,12 +27,13 @@ export const dirtyHours = pgTable("dirty_hours", {
   hour: timestamp("hour", { withTimezone: true }).notNull(),
 });
 
-// 집계 작업의 상태(한 행). watermark 앞의 시간은 집계 표에 있다. null이면 아직 한 번도 돌지 않았다.
+// 집계 작업의 상태(한 행). watermark 앞의 시간은 집계 표에 있다. 마이그레이션이 보관 기간의 시작으로 넣는다.
+// null을 허용하면 첫 실행이 아무것도 넣지 않고 워터마크만 옮겨 과거가 0이 된다(설계 리뷰가 재현함).
 export const rollupState = pgTable(
   "rollup_state",
   {
     id: boolean("id").primaryKey().default(true),
-    watermark: timestamp("watermark", { withTimezone: true }),
+    watermark: timestamp("watermark", { withTimezone: true }).notNull(),
   },
   (t) => [check("rollup_state_one_row", sql`${t.id}`)],
 );
