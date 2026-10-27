@@ -63,15 +63,16 @@ describe("앱 role의 권한", () => {
   });
 
   it("표의 GRANT·REVOKE는 경고만 내고 권한을 바꾸지 못한다", async () => {
-    const acl = async () =>
-      (await owner.query("select relacl::text as acl from pg_class where oid = 'roles_test_t'::regclass")).rows;
-    const before = await acl();
+    // 되돌리기 전에 같은 트랜잭션 안에서 본다(되돌린 뒤에 보면 바뀌었어도 같다)
+    const acl = async (client: pg.PoolClient | pg.Pool) =>
+      (await client.query("select relacl::text as acl from pg_class where oid = 'roles_test_t'::regclass")).rows;
+    const before = await acl(owner);
     await inRolledBack(app, async (client, notices) => {
       await client.query("grant select on roles_test_t to public");
       await client.query("revoke select on roles_test_t from event_analytics_app");
       expect(notices.map((n) => n.split(" ")[0])).toEqual(expect.arrayContaining(["01007", "01006"]));
+      expect(await acl(client)).toEqual(before);
     });
-    expect(await acl()).toEqual(before);
   });
 
   // 01000은 일반 경고 코드라, 메시지에 표 이름이 있는지도 본다(메시지 말은 로컬과 CI가 다르다).

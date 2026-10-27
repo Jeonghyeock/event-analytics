@@ -24,8 +24,18 @@ describe("createPool", () => {
     expect(rows[0]).toEqual({ tz: "UTC", day: "2026-10-27", at: "00:00" });
   });
 
-  it("호출한 쪽의 options를 지우지 않고 덧붙인다", async () => {
-    const other = createPool({ connectionString: inject("databaseUrl"), options: "-c statement_timeout=1234" });
+  // pg는 주소의 ?options=로 config.options를 덮어쓴다. 어느 쪽으로 넘겨도 고정이 남고, 넘긴 설정도 산다.
+  const withUrlOptions = (options: string) => {
+    const u = new URL(inject("databaseUrl"));
+    u.searchParams.set("options", options);
+    return u.toString();
+  };
+  it.each([
+    ["config.options", { connectionString: inject("databaseUrl"), options: "-c statement_timeout=1234" }],
+    ["주소의 ?options=", { connectionString: withUrlOptions("-c statement_timeout=1234") }],
+    ["주소의 TimeZone(고정이 이긴다)", { connectionString: withUrlOptions("-c TimeZone=Asia/Seoul -c statement_timeout=1234") }],
+  ])("%s를 지우지 않고 덧붙인다", async (_, config) => {
+    const other = createPool(config);
     try {
       const { rows } = await other.query("select current_setting('TimeZone') as tz, current_setting('statement_timeout') as st");
       expect(rows[0]).toEqual({ tz: "UTC", st: "1234ms" });

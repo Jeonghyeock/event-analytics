@@ -12,6 +12,17 @@ pg.types.setTypeParser(pg.types.builtins.INT8, (value: string) => {
 // 앱 연결의 세션 시간대를 UTC로 고정한다(DESIGN 10장 14). 서버 기본값은 로컬이 Asia/Seoul, CI가 UTC라,
 // 시간대 없는 시각 글자나 timestamptz → date 변환이 어디서 도느냐에 따라 다른 날이 된다. 파티션과 시간 집계는 UTC 기준이다.
 // 리포트의 시간대(Asia/Seoul 등)는 세션 설정이 아니라 쿼리의 인자로 준다.
+// pg는 주소의 ?options=가 있으면 config.options를 통째로 덮어쓴다. 그래서 주소의 것을 꺼내 호출한 쪽의 것과 합치고, 고정을 맨 뒤에 둔다
+// (같은 설정이 여럿이면 뒤의 것이 이긴다). options를 늘 넘기므로 PGOPTIONS 환경 변수는 읽지 않는다.
 export function createPool(config: pg.PoolConfig): pg.Pool {
-  return new pg.Pool({ ...config, options: [config.options, "-c TimeZone=UTC"].filter(Boolean).join(" ") });
+  let { connectionString } = config;
+  let fromUrl: string | null = null;
+  if (connectionString) {
+    const url = new URL(connectionString);
+    fromUrl = url.searchParams.get("options");
+    url.searchParams.delete("options");
+    connectionString = url.toString();
+  }
+  const options = [fromUrl, config.options, "-c TimeZone=UTC"].filter(Boolean).join(" ");
+  return new pg.Pool({ ...config, connectionString, options });
 }

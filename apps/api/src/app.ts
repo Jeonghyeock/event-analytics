@@ -9,6 +9,10 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
+  // 풀에서 쉬는 연결이 끊기면(DB 재시작, pg_terminate_backend) 풀이 'error'를 낸다. 듣는 쪽이 없으면 프로세스가 죽는다.
+  // 끊긴 연결은 풀이 버리고 다음 요청에 새로 맺으므로 로그만 남긴다.
+  pool.on("error", (err) => app.log.error({ err }, "풀의 쉬는 연결이 끊김"));
+
   // 5xx는 오류 내용을 로그에만 남기고 응답에는 싣지 않는다(SQL 문장과 파라미터가 들어 있을 수 있다).
   // 4xx(요청 검증 실패 등)는 무엇이 틀렸는지 알려 준다.
   app.setErrorHandler((err: FastifyError, request, reply) => {

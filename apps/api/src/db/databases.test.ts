@@ -1,5 +1,6 @@
 import pg from "pg";
-import { afterAll, describe, expect, inject, it } from "vitest";
+import { afterAll, describe, expect, inject, it, onTestFinished } from "vitest";
+import { checkDatabaseLocale, dropDatabase, withAdminClient, withDatabase } from "./databases.js";
 
 // 테스트 DB는 NEW_DATABASE_OPTIONS로 만든 템플릿을 복제한다(test/global-setup.ts). 로컬과 CI가 같은 정렬을 쓰는지 본다(DESIGN 10장 13).
 describe("DB 설정", () => {
@@ -20,5 +21,17 @@ describe("DB 설정", () => {
          from unnest(array['b', 'B', 'a', '가', 'é', 'Z']) as x`,
     );
     expect(rows).toEqual([{ sorted: ["B", "Z", "a", "b", "é", "가"], upper: "ÉA" }]);
+  });
+
+  it("마이그레이션 명령은 옵션 없이(template1, OS 정렬) 만든 DB를 거절한다", async () => {
+    const baseUrl = inject("ownerDatabaseUrl");
+    await expect(checkDatabaseLocale(baseUrl)).resolves.toBeUndefined();
+    const name = `event_analytics_locale_${process.pid}`;
+    await withAdminClient(baseUrl, async (client) => {
+      await dropDatabase(client, name);
+      await client.query(`CREATE DATABASE ${name}`);
+    });
+    onTestFinished(() => withAdminClient(baseUrl, (client) => dropDatabase(client, name)));
+    await expect(checkDatabaseLocale(withDatabase(baseUrl, name))).rejects.toThrow(/builtin C.UTF-8이 아닙니다/);
   });
 });
