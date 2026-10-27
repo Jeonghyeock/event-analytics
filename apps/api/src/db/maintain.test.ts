@@ -53,14 +53,14 @@ async function leavePending(db: { owner: string; app: string }, name: string) {
 }
 
 describe("관리 작업", () => {
-  it("오늘 ±7일 가운데 없는 날을 ATTACH로 만들고, 다시 돌리면 아무것도 하지 않는다", async () => {
+  it("오늘 ±7일 가운데 없는 날을 ATTACH로 만들고, 다시 돌리면 만들지 않는다(부모 통계만 새로 한다)", async () => {
     const db = await freshDatabase();
     const owner = await connect(db.owner);
     const first = await maintain(owner, { today, ...fast });
     expect(first.created).toHaveLength(15);
     expect(first.created[0]).toBe("events_p20261020");
     expect(first.created.at(-1)).toBe("events_p20261103");
-    expect(await maintain(owner, { today, ...fast })).toEqual({ created: [], finalized: [], dropped: [], errors: [] });
+    expect(await maintain(owner, { today, ...fast })).toEqual({ created: [], finalized: [], dropped: [], analyzed: true, errors: [] });
 
     // 새 파티션의 기본 키 인덱스는 부모 인덱스에 붙었고, 앱 role은 소유자의 기본 권한으로 DML을 할 수 있다
     const { rows } = await owner.query(
@@ -166,6 +166,7 @@ describe("관리 작업", () => {
       created: [],
       finalized: ["events_p20260727"],
       dropped: ["events_p20260727"],
+      analyzed: true,
       errors: [],
     });
   });
@@ -228,6 +229,23 @@ describe("관리 작업", () => {
     expect(result.created).toContain("events_p20261028");
     expect(result.errors).toEqual([]);
     expect(await missingPartitionDays(owner, "2026-10-20", "2026-11-03")).toEqual([]);
+  });
+
+  it("부모 표(events)의 통계를 새로 한다(autovacuum은 파티션 부모를 분석하지 않는다). 잎은 다시 분석하지 않는다(ONLY)", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await maintain(owner, { today, ...fast });
+    const app = await connect(db.app);
+    for (const day of ["2026-10-26", today]) await app.query(insertSql(day));
+    const parentStats = async () =>
+      (await owner.query("select count(*)::int as n from pg_stats where schemaname = 'public' and tablename = 'events' and inherited")).rows[0]!.n;
+    expect(await parentStats()).toBe(0);
+
+    expect((await maintain(owner, { today, ...fast })).analyzed).toBe(true);
+    expect(await parentStats()).toBeGreaterThan(0);
+    // 손으로 한 ANALYZE의 횟수(autovacuum의 것은 autoanalyze_count로 따로 센다). ONLY가 없으면 잎마다 1이 된다.
+    const { rows } = await owner.query("select max(analyze_count)::int as leaf from pg_stat_user_tables where relname like 'events_p%'");
+    expect(rows).toEqual([{ leaf: 0 }]);
   });
 
   it("부른 쪽이 트랜잭션 안이면 거절한다(우리 COMMIT이 그 트랜잭션을 끝내 버리므로)", async () => {

@@ -69,6 +69,8 @@ describe("측정 템플릿", () => {
     expect(cloned.dirtyHours).toBe(0);
     // 아직 분석하지 않은 새 파티션(reltuples = -1)은 행 수를 줄이지 않는다
     expect(Math.round(cloned.eventRows)).toBe(3_000);
+    // 관리 작업처럼 부모의 통계를 새로 했다(템플릿에는 없다)
+    expect(cloned.parentStats).toBeGreaterThan(0);
   });
 
   it("원본과 대상이 같으면 지우기 전에 거절한다", async () => {

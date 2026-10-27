@@ -1,6 +1,6 @@
 import pg from "pg";
 import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js";
-import { addDays, AHEAD_DAYS, BEHIND_DAYS, createDailyPartitions, dbToday } from "../db/partitions.js";
+import { addDays, AHEAD_DAYS, analyzeParent, BEHIND_DAYS, createDailyPartitions, dbToday } from "../db/partitions.js";
 import { createPool } from "../db/pool.js";
 import { runRollup } from "../rollup.js";
 
@@ -84,9 +84,10 @@ export async function buildLoadTemplate(ownerUrl: string, { source, template = T
   }
 }
 
-// 회차 한 번의 DB를 템플릿에서 새로 만들고, 관리 작업 가운데 만들기만 돈다(관리 작업과 같은 범위: 지난 7일 ~ 앞으로 7일).
+// 회차 한 번의 DB를 템플릿에서 새로 만들고, 관리 작업 가운데 만들기와 부모 표의 통계를 돈다(관리 작업과 같은 범위: 지난 7일 ~ 앞으로 7일).
 // 지난 7일이 없으면 늦은 이벤트가 partition_missing으로 503이 된다(코드 리뷰). 떼기는 돌지 않는다: 날이 지나면 보관 기간 밖
 // 날이 생기지만, 회차마다 파티션 수와 행 수를 남겨 같은 일을 했는지 본다.
+// 부모 표의 통계(10장 62): 템플릿은 부모를 분석하지 않은 채 두고(고치기 전의 운영), 회차마다 관리 작업처럼 분석한다(고친 뒤의 운영).
 export async function cloneLoadDatabase(ownerUrl: string, { template = TEMPLATE_DATABASE, target = LOAD_DATABASE } = {}) {
   const url = await cloneDatabase(ownerUrl, template, target);
   const client = new pg.Client({ connectionString: url, application_name: "event-analytics-load-runner" });
@@ -95,6 +96,7 @@ export async function cloneLoadDatabase(ownerUrl: string, { template = TEMPLATE_
     const today = await dbToday(client);
     const created = await createDailyPartitions(client, addDays(today, -BEHIND_DAYS), addDays(today, AHEAD_DAYS));
     if (created.length > 0) await disableAutovacuum(client, created);
+    await analyzeParent(client);
   } finally {
     await client.end();
   }
