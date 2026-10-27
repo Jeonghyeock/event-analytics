@@ -18,14 +18,15 @@ export function runFunnel(pool: pg.Pool, q: FunnelQuery, { asOf, ...limits }: Fu
     await client.query("select set_config('enable_nestloop', 'off', true)");
     // windowEnd(기간 끝 + 전환 기간)를 여기서 계산해 퍼널 문장에 매개변수로 넘긴다. 문장 안에서 더하면 STABLE이라 계획할 때 가지를 못 친다.
     // provisional: windowEnd가 최근 7일 안이면 늦은 이벤트가 더 올 수 있다.
-    const range = await client.query<{ from: Date; to: Date; window_end: Date; retained_from: Date; provisional: boolean }>(
+    const range = await client.query<{ from: Date; to: Date; window_end: Date; retained_from: Date; provisional: boolean; as_of: Date }>(
       `select ${START} as "from", ${END} as "to", w.window_end,
               ${retainedFromSql("$5", "$6")} as retained_from,
-              w.window_end > coalesce($5::timestamptz, now()) - interval '7 days' as provisional
+              w.window_end > coalesce($5::timestamptz, now()) - interval '7 days' as provisional,
+              coalesce($5::timestamptz, now()) as as_of
          from (select ${END} + make_interval(mins => $4::int) as window_end) w`,
       [q.from, q.to, q.timezone, q.windowMinutes, asOf ?? null, RETENTION_DAYS],
     );
-    const { from, to, window_end: windowEnd, retained_from: retainedFrom, provisional } = range.rows[0]!;
+    const { from, to, window_end: windowEnd, retained_from: retainedFrom, provisional, as_of: asOfInstant } = range.rows[0]!;
     checkRetention(from, retainedFrom);
     const { text, values } = buildFunnelSql(q, windowEnd);
     const { rows } = await client.query(text, values);
@@ -38,6 +39,7 @@ export function runFunnel(pool: pg.Pool, q: FunnelQuery, { asOf, ...limits }: Fu
         rangeEnd: to.toISOString(),
         windowEnd: windowEnd.toISOString(),
         provisional,
+        asOf: asOfInstant.toISOString(),
       },
     };
   });

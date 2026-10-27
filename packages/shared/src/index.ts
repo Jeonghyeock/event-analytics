@@ -192,6 +192,8 @@ export const ReportResult = z.object({
     stale: z.boolean(),
     // 끝이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다(받을 기간 7일)
     provisional: z.boolean(),
+    // 서버가 판단에 쓴 "지금"(UTC ISO). 화면은 이것으로 아직 오지 않은 묶음(bucket > asOf)을 그리지 않고 진행 중인 묶음을 가린다(10장 53).
+    asOf: z.string(),
     buckets: z.array(ReportBucket),
   }),
 });
@@ -242,6 +244,8 @@ export const FunnelResult = z.object({
     windowEnd: z.string(),
     // windowEnd가 최근 7일 안이면 늦은 이벤트가 더 올 수 있다
     provisional: z.boolean(),
+    // 서버가 판단에 쓴 "지금"(UTC ISO). windowEnd > asOf이면 전환 기간이 아직 끝나지 않은 진입이 있다(10장 53).
+    asOf: z.string(),
   }),
 });
 export type FunnelResult = z.infer<typeof FunnelResult>;
