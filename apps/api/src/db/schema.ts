@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { bigint, boolean, check, pgTable, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { bigint, boolean, check, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 
 // drizzle-kit이 마이그레이션을 만들 때 읽는 표 정의.
 // 파티션 표(events)는 drizzle-kit이 DDL(PARTITION BY, PARTITION OF)을 내지 못해 손으로 쓴 마이그레이션에만 있고 여기에 두지 않는다(DESIGN 5장).
@@ -36,4 +36,19 @@ export const rollupState = pgTable(
     watermark: timestamp("watermark", { withTimezone: true }).notNull(),
   },
   (t) => [check("rollup_state_one_row", sql`${t.id}`)],
+);
+
+// 저장한 리포트(DESIGN 6.7, 10장 52). 설정은 kind의 공유 스키마로 검사한 값을 그대로 둔다(기본값이 채워진 것).
+// 이름은 종류가 달라도 유일하다. 열 때 다시 검사한다(스키마가 바뀌면 옛 설정이 맞지 않을 수 있다).
+export const savedReports = pgTable(
+  "saved_reports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    kind: text("kind").notNull(),
+    config: jsonb("config").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("saved_reports_name_key").on(t.name), check("saved_reports_kind", sql`${t.kind} in ('report', 'funnel', 'retention')`)],
 );
