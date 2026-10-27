@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { parseEnv } from "node:util";
 import { defineConfig, devices } from "@playwright/test";
 
@@ -9,6 +10,7 @@ const WEB_ORIGIN = "http://127.0.0.1:5175";
 
 // 고정 데이터의 날: 한국 시각의 어제. 여기서 한 번 정해 준비(webServer.env)와 테스트(같은 process.env를 물려받는 worker)가 함께 쓴다.
 // 준비와 테스트가 각자 계산하면 그 사이 한국 시각 자정을 넘을 때 어긋난다(설계 리뷰).
+// 이미 있으면 두는 것은 worker가 이 파일을 다시 읽을 때 같은 값을 쓰게 하려는 장치다(밖에서 다른 날을 주는 기능이 아니다).
 if (!process.env.E2E_DAY) {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Seoul" }).format(new Date());
   process.env.E2E_DAY = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -22,12 +24,19 @@ const envFile = (() => {
 function e2eDatabaseUrl(key: "DATABASE_URL" | "DATABASE_OWNER_URL") {
   const url = process.env[key] ?? envFile[key];
   if (!url) throw new Error(`${key}가 없습니다(.env 또는 환경 변수)`);
-  const u = new URL(url);
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    // URL의 오류는 입력 전체(비밀번호 포함)를 담으므로 그대로 던지지 않는다(코드 리뷰)
+    throw new Error(`${key}를 URL로 읽지 못했습니다`);
+  }
   u.pathname = "/event_analytics_e2e";
   return u.toString();
 }
 
-const repoRoot = new URL("../..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+// 저장소 맨 위. fileURLToPath는 드라이브 글자와 퍼센트 인코딩(공백·한글 경로)을 푼다.
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   testDir: "e2e",
@@ -46,6 +55,8 @@ export default defineConfig({
       url: `http://127.0.0.1:${API_PORT}/health`,
       reuseExistingServer: false,
       timeout: 120_000,
+      // CI에서는 준비와 API의 로그를 보인다(실패하면 까닭을 볼 길이 이것뿐이다). 로컬에서는 요청마다 찍혀 시끄럽다.
+      stdout: process.env.CI ? "pipe" : "ignore",
       env: {
         DATABASE_URL: e2eDatabaseUrl("DATABASE_URL"),
         DATABASE_OWNER_URL: e2eDatabaseUrl("DATABASE_OWNER_URL"),
