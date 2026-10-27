@@ -1,7 +1,7 @@
 import type { Dimension, ReportQuery } from "@event-analytics/shared";
 import type { z } from "zod";
 
-// 양식의 기본 기간(DESIGN 6.7). 화면이 날짜를 계산하는 하나뿐인 곳이다: 리포트 시간대의 "오늘"을 Intl로 읽어 "최근 n일"을 만든다.
+// 양식의 기간(DESIGN 6.7). 화면이 리포트 시간대의 "오늘"을 읽는 하나뿐인 곳이다: Intl로 읽어 "최근 n일"(기본값과 단추)을 만든다.
 // 검사는 서버가 한다(보관 기간 밖이면 422).
 export function todayIn(timezone: string, now = new Date()): string {
   // en-CA는 YYYY-MM-DD로 쓴다
