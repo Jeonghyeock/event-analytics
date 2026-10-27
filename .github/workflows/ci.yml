@@ -47,6 +47,7 @@ jobs:
             apps/api/src/e2e-serve-cli.ts \
             apps/api/src/load/detach-rehearsal-cli.ts \
             apps/api/src/load/generate-cli.ts \
+            apps/api/src/load/template-cli.ts \
             apps/api/test/global-setup.ts \
             apps/web/playwright.config.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
@@ -57,6 +58,7 @@ jobs:
             apps/api/src/db/events.test.ts \
             apps/api/src/db/migrate.test.ts \
             apps/api/src/db/roles.test.ts \
+            apps/api/src/load/template.test.ts \
             apps/api/src/routes/ingest.test.ts \
             apps/api/test/fresh-database.ts \
             apps/api/test/global-setup.ts)"

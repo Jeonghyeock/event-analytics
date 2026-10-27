@@ -72,6 +72,23 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
     expect(tick.pools.ingest.total).toBeGreaterThanOrEqual(1);
   });
 
+  it("요청이 풀에서 연결을 받기까지 기다린 시간을 응답 머리 Server-Timing으로 알린다(DB를 쓰지 않은 요청에는 없다)", async () => {
+    expect((await app.inject("/health")).headers["server-timing"]).toMatch(/^pool;dur=\d+\.\d$/);
+    expect((await app.inject("/test/busy")).headers["server-timing"]).toBeUndefined();
+    // 리포트 풀(2개)을 모두 쥐고 있으면 리포트 요청은 놓아줄 때까지 기다린다
+    const held = await Promise.all([reportPool.connect(), reportPool.connect()]);
+    const pending = app.inject({
+      method: "POST",
+      url: "/reports/query",
+      payload: { metrics: ["events"], granularity: "day", from: "2020-01-01", to: "2020-01-02" },
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    for (const client of held) client.release();
+    const res = await pending;
+    const waited = Number(/pool;dur=([\d.]+)/.exec(res.headers["server-timing"] as string)?.[1]);
+    expect(waited).toBeGreaterThanOrEqual(250);
+  });
+
   it("연결을 받지 못한 것(대기 한도)을 연결 오류로 세고, 새로 맺은 연결 수를 쓴다", async () => {
     // 한도는 새 연결을 맺는 시간에도 걸리므로, 첫 연결이 다른 테스트 파일과 겹쳐 늦어도 맺어지게 넉넉히 둔다.
     const small = createPool({ connectionString: inject("databaseUrl"), max: 1, connectionTimeoutMillis: 1000 });

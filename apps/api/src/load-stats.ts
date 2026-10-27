@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { appendFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { monitorEventLoopDelay, PerformanceObserver, performance } from "node:perf_hooks";
@@ -28,6 +29,11 @@ export function summarize(values: number[]) {
 // setImmediate 뒤에 막힌 것은 잡히지 않을 때가 있어(seat-booking의 실험) 포화는 이벤트 루프 사용률(ELU)과 함께 본다.
 const LOOP_DELAY_RESOLUTION_MS = 10;
 export const loopDelayMs = (ns: number) => round(Math.max(0, ns / 1e6 - LOOP_DELAY_RESOLUTION_MS));
+
+// 요청마다 풀에서 연결을 받기까지 기다린 시간. 응답 머리 Server-Timing(pool;dur=…)으로 알려, k6가 리포트 종류별 요청 시간을
+// 풀 대기와 실행으로 나눈다(DESIGN 6.8 "지표"). 요청 하나가 연결을 여러 번 받으면 더한다.
+type RequestTiming = { poolWaitMs: number; connects: number };
+const requestTiming = new AsyncLocalStorage<RequestTiming>();
 
 const routeKey = (request: FastifyRequest) => `${request.method} ${request.routeOptions.url ?? "(없는 경로)"}`;
 
@@ -76,9 +82,15 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
     const timedConnect = (callback?: ConnectCallback) => {
       const started = performance.now();
       const record = (failed: boolean) => {
+        const waited = performance.now() - started;
         const window = poolWindows.get(name)!;
-        window.connectWaits.push(performance.now() - started);
+        window.connectWaits.push(waited);
         if (failed) window.connectErrors++;
+        const timing = requestTiming.getStore();
+        if (timing) {
+          timing.poolWaitMs += waited;
+          timing.connects++;
+        }
       };
       if (callback) {
         return connect((err, client, release) => {
@@ -194,9 +206,12 @@ export function createLoadStats(options: { dir: string; pools: Record<string, pg
         reply.raw.once("close", () => {
           if (!reply.raw.writableFinished) routeWindow(routeKey(request)).aborted++;
         });
-        done();
+        // 이 요청의 나머지(처리기와 그 안의 연결 받기)가 이 저장소를 본다
+        requestTiming.run({ poolWaitMs: 0, connects: 0 }, done);
       });
       app.addHook("onSend", (request, reply, payload, done) => {
+        const timing = requestTiming.getStore();
+        if (timing && timing.connects > 0) reply.header("server-timing", `pool;dur=${timing.poolWaitMs.toFixed(1)}`);
         if (reply.statusCode >= 400) {
           const code = replyCode(payload);
           if (code) replyCodes.set(request, code);
