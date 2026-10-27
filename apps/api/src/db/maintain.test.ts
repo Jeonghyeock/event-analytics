@@ -1,26 +1,11 @@
 import pg from "pg";
-import { describe, expect, inject, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { freshDatabase as freshDb } from "../../test/fresh-database.js";
 import { missingSoon } from "../partition-watch.js";
-import { dropDatabase, NEW_DATABASE_OPTIONS, withAdminClient, withDatabase } from "./databases.js";
-import { runMigrations } from "./migrate.js";
 import { createDailyPartitions, listPartitions, maintain, missingPartitionDays } from "./partitions.js";
 
 // 파티션 관리 작업(DESIGN 6.2, 10장 28). 파티션을 만들고 떼므로 테스트마다 새 DB를 만들어 마이그레이션하고, 끝나면 지운다.
-const ownerUrl = inject("ownerDatabaseUrl");
-const appUrl = inject("databaseUrl");
-let created = 0;
-
-async function freshDatabase() {
-  const name = `event_analytics_maint_${process.pid}_${++created}`;
-  await withAdminClient(ownerUrl, async (client) => {
-    await dropDatabase(client, name);
-    await client.query(`CREATE DATABASE ${name} ${NEW_DATABASE_OPTIONS}`);
-  });
-  onTestFinished(() => withAdminClient(ownerUrl, (client) => dropDatabase(client, name)));
-  const url = withDatabase(ownerUrl, name);
-  await runMigrations(url);
-  return { owner: url, app: withDatabase(appUrl, name) };
-}
+const freshDatabase = () => freshDb("maint");
 
 async function connect(url: string, options = "-c TimeZone=UTC") {
   const client = new pg.Client({ connectionString: url, options });
