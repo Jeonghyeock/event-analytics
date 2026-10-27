@@ -1,4 +1,4 @@
-import type { FunnelQuery, IngestEvent } from "@event-analytics/shared";
+import { FunnelQuery, type IngestEvent } from "@event-analytics/shared";
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { openDatabase } from "../../test/fresh-database.js";
@@ -7,6 +7,7 @@ import { createDailyPartitions } from "../db/partitions.js";
 import { createPool } from "../db/pool.js";
 import { insertEvents } from "../ingest.js";
 import { FUNNEL, generate } from "../load/generate.js";
+import { runFunnel } from "../reports/funnel-run.js";
 import { buildFunnelSql } from "../reports/funnel-sql.js";
 
 // 퍼널(DESIGN 6.5, 10장 42~43): 작은 고정 데이터에서 손으로 센 값과 같다. 이 파일만 쓰는 새 DB에 넣는다.
@@ -160,6 +161,17 @@ describe("손으로 센 퍼널(첫 진입 기준)", () => {
     const old = { from: "2026-10-18", to: "2026-10-18" };
     expect((await funnel({ ...old })).body.meta.provisional).toBe(false);
     expect((await funnel({ ...old, windowMinutes: 10_080 })).body.meta).toMatchObject({ windowEnd: "2026-10-25T15:00:00.000Z", provisional: true });
+  });
+
+  it("meta.asOf는 판단에 쓴 \"지금\"이다(넘기지 않으면 DB의 now())", async () => {
+    // 날짜는 실제 오늘(UTC)이다(고정 날짜에 실제 "지금"을 쓰면 90일 뒤 보관 기간 밖이 된다)
+    const today = new Date().toISOString().slice(0, 10);
+    const q = FunnelQuery.parse({ steps: ["a", "b"], windowMinutes: 60, from: today, to: today, timezone: "UTC" });
+    const dbNow = async () => (await pool.query<{ t: Date }>("select now() as t")).rows[0]!.t.toISOString();
+    const before = await dbNow();
+    const { meta } = await runFunnel(pool, q);
+    const after = await dbNow();
+    expect(before <= meta.asOf && meta.asOf <= after).toBe(true);
   });
 
   it("진입이 없으면 0인 한 행이다", async () => {
