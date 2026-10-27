@@ -34,6 +34,7 @@ GRANT event_analytics_app TO event_analytics;
 npm ci
 npm run db:migrate -w @event-analytics/api   # 마이그레이션(apps/api/drizzle/)
 npm run db:maintain -w @event-analytics/api   # 파티션 관리: 오늘(UTC) ±7일 만들기, 90일 지난 날 떼고 지우기
+npm run rollup:run -w @event-analytics/api     # 시간 집계 표 채우기(서버는 1분마다 스스로 돈다)
 npm test                                     # 템플릿 DB를 복제한 테스트 DB에서 돌고, 끝나면 지운다
 npm run dev                                  # API: http://127.0.0.1:3002
 ```
