@@ -499,11 +499,13 @@
 ```json
 {
   "rows": [{ "cohort": "2026-10-01", "cohortStart": "2026-09-30T15:00:00.000Z", "users": 1200, "returned": [310, 220, null] }],
-  "meta": { "timezone": "Asia/Seoul", "rangeStart": "…", "rangeEnd": "…", "days": 3, "provisional": true }
+  "meta": { "timezone": "Asia/Seoul", "rangeStart": "…", "rangeEnd": "…", "days": 3, "today": "2026-10-27", "provisional": true }
 }
 ```
 
-- 행은 기간의 모든 날이다(31개까지). 무리가 없는 날은 `users: 0`이고, 지난 칸은 0, 안 지난 칸은 `null`이다.
+- 행은 기간의 모든 날이다(31개까지). 무리가 없는 날은 `users: 0`이고, 지난 칸은 0, 안 지난 칸은 `null`이다. 오늘의 무리는 지금까지 센 값이고, 오지 않은 날의 무리는 `users: null`이다.
+- `meta.today`는 `null` 칸을 정한 "오늘"(리포트 시간대의 날짜)이다. 화면이 자기 시계로 다시 계산하지 않게 준다(코드 리뷰).
+- 화면 참고: `users: 0`인 무리의 비율은 0/0이다. 일광 절약 시간대에서 `cohortStart`의 간격은 23·25시간이라, 날 글자는 `cohort`로 붙인다.
 - `returned[i]`는 (i + 1)일째다.
 - `provisional`은 마지막 칸의 날의 끝((`to` + 1 + N)일 자정, 리포트 시간대)이 지금으로부터 7일 안이면 참이다(늦은 이벤트).
 
