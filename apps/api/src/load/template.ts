@@ -42,9 +42,10 @@ async function disableAutovacuum(client: pg.ClientBase, names?: string[]) {
   for (const { name } of rows) await client.query(`alter table "${name}" set (autovacuum_enabled = false)`);
 }
 
-// 템플릿을 만든다: 원본 복제 → 집계 작업을 끝까지 → 잎 표마다 VACUUM (FREEZE, ANALYZE) → autovacuum 끔. 소유자 주소로 돈다
-// (ANALYZE·VACUUM은 소유자만 한다, 10장 57). DB 전체 VACUUM은 파티션 부모(events)까지 분석한다. 운영 서버에서 부모는 자동으로
-// 분석되지 않으므로, 잎만 이름으로 해서 부모는 원본 그대로 둔다. 그래야 후보 "부모 표의 통계"를 ANALYZE ONLY events 전후로 볼 수 있다(코드 리뷰).
+// 템플릿을 만든다: 원본 복제 → 집계 작업을 끝까지 → 잎 표마다 VACUUM (FREEZE, ANALYZE) → 부모 통계 지움 → autovacuum 끔.
+// 소유자 주소로 돈다(ANALYZE·VACUUM은 소유자만 한다, 10장 57). 운영 서버에서 파티션 부모(events)는 자동으로 분석되지 않는다.
+// 그래서 DB 전체 VACUUM(부모까지 분석) 대신 잎만 이름으로 하고, 원본의 부모 통계(개발 DB는 손으로 ANALYZE했다)는 지운다.
+// 그래야 후보 "부모 표의 통계"를 ANALYZE ONLY events 전후로 볼 수 있다(코드 리뷰).
 export async function buildLoadTemplate(ownerUrl: string, { source, template = TEMPLATE_DATABASE }: { source: string; template?: string }) {
   const url = await cloneDatabase(ownerUrl, source, template);
   const pool = createPool({ connectionString: url, max: 1, application_name: "event-analytics-load-template" });
@@ -67,6 +68,12 @@ export async function buildLoadTemplate(ownerUrl: string, { source, template = T
           where n.nspname in ('public', 'drizzle') and c.relkind = 'r' order by 1`,
       );
       await client.query(`vacuum (freeze, analyze) ${rows.map((r) => r.name).join(", ")}`);
+      // PG18의 통계 지우기(표에 MAINTAIN 권한, 소유자는 가진다). 부모의 통계는 상속(inherited) 통계다.
+      await client.query(
+        `select pg_clear_attribute_stats('public', 'events', a.attname::text, true)
+           from pg_attribute a where a.attrelid = 'events'::regclass and a.attnum > 0 and not a.attisdropped`,
+      );
+      await client.query("select pg_clear_relation_stats('public', 'events')");
       await disableAutovacuum(client);
     } finally {
       client.release();
