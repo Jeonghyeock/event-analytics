@@ -11,7 +11,7 @@ try {
   const started = performance.now();
   const result = await runRollup(pool);
   const sec = ((performance.now() - started) / 1000).toFixed(1);
-  console.log(result.skipped ? "다른 집계 작업이 돌고 있어 건너뛰었습니다" : `조각 ${result.chunks}개, 시간 ${result.hours}개, 워터마크 ${result.watermark}, ${sec}초`);
+  console.log(result.skipped ? "다른 집계 작업이 돌고 있어 건너뛰었습니다" : `조각 ${result.chunks}개, 시간 ${result.hours}개, 워터마크 ${result.watermark ?? "(그대로)"}, ${sec}초`);
 } finally {
   await pool.end();
 }

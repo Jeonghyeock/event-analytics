@@ -28,7 +28,7 @@ const stopRollup = startRollupLoop(rollupPool, app.log);
 const stopWatch = startPartitionWatch(pool, app.log);
 app.addHook("onClose", async () => {
   stopWatch();
-  stopRollup();
+  await stopRollup();
   await Promise.all([pool.end(), reportPool.end(), rollupPool.end()]);
 });
 

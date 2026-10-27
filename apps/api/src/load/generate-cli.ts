@@ -58,13 +58,17 @@ try {
       console.log(`${made.toLocaleString()}건(새로 ${inserted.toLocaleString()}) ${sec.toFixed(0)}초, 초당 ${Math.round(made / sec).toLocaleString()}건`);
     }
   };
-  for (const event of generate({ seed, events, from, to })) {
-    pending.push({ ...event, at: Date.parse(event.occurredAt) });
-    if (pending.length >= batch) await flush();
+  try {
+    for (const event of generate({ seed, events, from, to })) {
+      pending.push({ ...event, at: Date.parse(event.occurredAt) });
+      if (pending.length >= batch) await flush();
+    }
+    await flush();
+  } finally {
+    // 넣은 범위의 시간을 한 번에 더러운 시간으로 적는다(집계 작업이 다시 센다, DESIGN 6.4). 중간에 실패해도 이미 커밋한 배치가 있으므로 적는다.
+    // 프로세스가 죽어 여기까지 못 오면, 같은 씨앗·끝 날로 다시 돌리면 된다(이벤트는 모두 중복이고 끝에 범위를 적는다).
+    await client.query("insert into dirty_hours (hour) select generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour')", [from, to]);
   }
-  await flush();
-  // 넣은 범위의 시간을 한 번에 더러운 시간으로 적는다(집계 작업이 다시 센다, DESIGN 6.4).
-  await client.query("insert into dirty_hours (hour) select generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour')", [from, to]);
   const sec = (performance.now() - started) / 1000;
   console.log(`끝: ${made.toLocaleString()}건 가운데 새로 ${inserted.toLocaleString()}건, ${sec.toFixed(1)}초(초당 ${Math.round(made / sec).toLocaleString()}건)`);
 } finally {
