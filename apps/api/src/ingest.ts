@@ -94,22 +94,7 @@ export async function ingest(pool: pg.Pool, events: unknown[]): Promise<IngestRe
       if (reason) rejected.push({ index, reason, message: WINDOW_MESSAGES[reason] });
       else accepted.push(row);
     }
-    let inserted = 0;
-    if (accepted.length > 0) {
-      const result = await client.query(INSERT, [
-        accepted.map((e) => e.eventId),
-        // 밀리초로 잘라 UTC 글자로 넘긴다. 재전송이 같은 시각을 밀리초로 다시 써도 같은 키가 된다(DESIGN 10장 17).
-        accepted.map((e) => new Date(e.at).toISOString()),
-        accepted.map((e) => e.userId),
-        accepted.map((e) => e.eventName),
-        accepted.map((e) => e.platform),
-        accepted.map((e) => e.country ?? null),
-        accepted.map((e) => e.channel ?? null),
-        accepted.map((e) => e.campaign ?? null),
-        accepted.map((e) => JSON.stringify(e.properties ?? {})),
-      ]);
-      inserted = result.rowCount ?? 0;
-    }
+    const inserted = await insertEvents(client, accepted);
     await client.query("commit");
     rejected.sort((a, b) => a.index - b.index);
     // 문장이 거르는 것은 충돌뿐이라, 받아들인 것 중 들어가지 않은 것은 모두 중복이다.
@@ -121,6 +106,24 @@ export async function ingest(pool: pg.Pool, events: unknown[]): Promise<IngestRe
   } finally {
     client.release();
   }
+}
+
+// 검사를 마친 이벤트를 한 문장으로 넣고, 새로 들어간 수를 돌려준다. 생성기가 DB에 바로 넣을 때도 쓴다(같은 키, 같은 순서).
+export async function insertEvents(client: pg.ClientBase, events: (IngestEvent & { at: number })[]) {
+  if (events.length === 0) return 0;
+  const result = await client.query(INSERT, [
+    events.map((e) => e.eventId),
+    // 밀리초로 잘라 UTC 글자로 넘긴다. 재전송이 같은 시각을 밀리초로 다시 써도 같은 키가 된다(DESIGN 10장 17).
+    events.map((e) => new Date(e.at).toISOString()),
+    events.map((e) => e.userId),
+    events.map((e) => e.eventName),
+    events.map((e) => e.platform),
+    events.map((e) => e.country ?? null),
+    events.map((e) => e.channel ?? null),
+    events.map((e) => e.campaign ?? null),
+    events.map((e) => JSON.stringify(e.properties ?? {})),
+  ]);
+  return result.rowCount ?? 0;
 }
 
 // 파티션이 없으면 23514이고, 부모 표(events) 이름이 붙고 제약 이름이 없다(DESIGN 10장 20).

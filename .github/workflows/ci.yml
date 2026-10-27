@@ -41,6 +41,7 @@ jobs:
           expected="$(printf '%s\n' \
             apps/api/src/db/maintain-cli.ts \
             apps/api/src/db/migrate-cli.ts \
+            apps/api/src/load/generate-cli.ts \
             apps/api/test/global-setup.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
           # 테스트는 앱 role로 돈다. 소유자 주소를 받는 테스트도 정해 둔다.
@@ -48,10 +49,10 @@ jobs:
           expected="$(printf '%s\n' \
             apps/api/src/db/databases.test.ts \
             apps/api/src/db/events.test.ts \
-            apps/api/src/db/maintain.test.ts \
             apps/api/src/db/migrate.test.ts \
             apps/api/src/db/roles.test.ts \
             apps/api/src/routes/ingest.test.ts \
+            apps/api/test/fresh-database.ts \
             apps/api/test/global-setup.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
       # 로컬과 같게 슈퍼유저가 아닌 role 둘(소유자, 앱)과, 정렬을 OS에 맡기지 않는 DB를 만든다(README 로컬 준비, DESIGN 10장 13).
