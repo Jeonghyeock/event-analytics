@@ -15,11 +15,13 @@ import { buildReportSql } from "../reports/sql.js";
 //   4  10-27 03:00 → 10-27 12:00  u1 seat_map_viewed web     없음 organic 없음
 //   5  10-27 14:59 → 10-27 23:59  u3 page_view       ios     JP   naver   camp_a
 //   6  10-27 15:00 → 10-28 00:00  u3 page_view       ios     JP   naver   camp_a
-//   뉴욕 2026-03-08(23시간)과 2026-11-01(25시간): 그 날의 정시마다 1건씩(u9), 이름 dst
+//   뉴욕 2027-03-14(23시간)와 2026-11-01(25시간): 그 날의 정시마다 1건씩(u9), 이름 dst
+// 보관 기간과 provisional은 "지금" = 2026-10-27 12:00 UTC로 판단한다(보관 기간의 시작은 07-29 0시 UTC).
 //   콜카타(+05:30): 10-26 18:29 → 10-26 23:59, 10-26 18:31 → 10-27 00:01(u8), 이름 ist
 let db: Awaited<ReturnType<typeof openDatabase>>;
 let pool: pg.Pool;
 let app: ReturnType<typeof buildApp>;
+const asOf = "2026-10-27T12:00:00Z";
 
 beforeAll(async () => {
   db = await openDatabase("report");
@@ -27,7 +29,7 @@ beforeAll(async () => {
   await owner.connect();
   try {
     for (const [from, to] of [
-      ["2026-03-08", "2026-03-09"],
+      ["2027-03-14", "2027-03-15"],
       ["2026-10-26", "2026-11-04"],
     ] as const) {
       await createDailyPartitions(owner, from, to, { retryDelaysMs: [] });
@@ -42,9 +44,9 @@ beforeAll(async () => {
         (gen_random_uuid(), '2026-10-27 15:00+00', 'u3', 'page_view', 'ios', 'JP', 'naver', 'camp_a'),
         (gen_random_uuid(), '2026-10-26 18:29+00', 'u8', 'ist', 'web', 'IN', null, null),
         (gen_random_uuid(), '2026-10-26 18:31+00', 'u8', 'ist', 'web', 'IN', null, null)`);
-    // 뉴욕의 그 날 0시부터 다음 날 0시 전까지 UTC 정시마다 1건(3월 8일은 23건, 11월 1일은 25건)
+    // 뉴욕의 그 날 0시부터 다음 날 0시 전까지 UTC 정시마다 1건(3월 14일은 23건, 11월 1일은 25건)
     for (const [from, to] of [
-      ["2026-03-08 05:00+00", "2026-03-09 03:00+00"],
+      ["2027-03-14 05:00+00", "2027-03-15 03:00+00"],
       ["2026-11-01 04:00+00", "2026-11-02 04:00+00"],
     ]) {
       await owner.query(
@@ -57,7 +59,7 @@ beforeAll(async () => {
     await owner.end();
   }
   pool = createPool({ connectionString: db.app });
-  app = buildApp(pool);
+  app = buildApp(pool, {}, { reports: { asOf } });
 });
 
 afterAll(async () => {
@@ -78,7 +80,15 @@ describe("A5 — 한국 시각과 UTC의 하루", () => {
     const day = { from: "2026-10-27", to: "2026-10-27", granularity: "day", filters: noDst.filters };
     expect((await report({ ...day, ...kst })).body).toEqual({
       rows: [{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 4, users: 3 }],
-      meta: { timezone: "Asia/Seoul", from: "2026-10-26T15:00:00.000Z", to: "2026-10-27T15:00:00.000Z", rowCount: 1, source: "raw" },
+      meta: {
+        timezone: "Asia/Seoul",
+        from: "2026-10-26T15:00:00.000Z",
+        to: "2026-10-27T15:00:00.000Z",
+        rowCount: 1,
+        source: "raw",
+        provisional: true,
+        buckets: [{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", utcOffset: "+09:00", partial: false }],
+      },
     });
     expect((await report({ ...day, timezone: "UTC" })).body.rows).toEqual([
       { bucket: "2026-10-27T00:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 3, users: 2 },
@@ -132,6 +142,12 @@ describe("A5 — 차원과 필터", () => {
     expect(body.rows).toEqual([{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 2 }]);
   });
 
+  it("null을 고르면 값이 없는 것도 남긴다(캠페인 없음 → 4번)", async () => {
+    const filters = [...noDst.filters, { dimension: "campaign", values: [null] }];
+    const { body } = await report({ from: "2026-10-27", to: "2026-10-27", granularity: "day", metrics: ["events"], filters, ...kst });
+    expect(body.rows).toEqual([{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, events: 1 }]);
+  });
+
   it("users를 고르지 않으면 행에 users가 없다", async () => {
     const { body } = await report({ from: "2026-10-27", to: "2026-10-27", granularity: "day", metrics: ["users"], filters: noDst.filters, ...kst });
     expect(body.rows).toEqual([{ bucket: "2026-10-26T15:00:00.000Z", label: "2026-10-27", dimensions: {}, users: 3 }]);
@@ -139,12 +155,13 @@ describe("A5 — 차원과 필터", () => {
 });
 
 describe("A5 — 시간대의 경계", () => {
-  // 3월 8일 2시가 3시로 건너뛴다. 정시마다 1건이면 시간 묶음 23개, 2시가 없다.
-  it("뉴욕 2026-03-08은 23시간이라 시간 묶음이 23개이고 02:00이 없다", async () => {
-    const { body } = await report({ from: "2026-03-08", to: "2026-03-08", granularity: "hour", timezone: "America/New_York", metrics: ["events"] });
+  // 3월 14일 2시가 3시로 건너뛴다. 정시마다 1건이면 시간 묶음 23개, 2시가 없다.
+  it("뉴욕 2027-03-14는 23시간이라 시간 묶음이 23개이고 02:00이 없다", async () => {
+    const { body } = await report({ from: "2027-03-14", to: "2027-03-14", granularity: "hour", timezone: "America/New_York", metrics: ["events"] });
     const labels = body.rows.map((r: { label: string }) => r.label);
     expect(labels).toHaveLength(23);
-    expect(labels).not.toContain("2026-03-08 02:00");
+    expect(labels).not.toContain("2027-03-14 02:00");
+    expect(body.meta.buckets.map((b: { label: string }) => b.label)).toEqual(labels);
     expect(body.rows.every((r: { events: number }) => r.events === 1)).toBe(true);
   });
 
@@ -175,9 +192,28 @@ describe("A5 — 시간대의 경계", () => {
     ]);
   });
 
-  it("수요일(10-28)에 시작하는 기간의 주 묶음은 그 주 월요일이지만 기간 안의 이벤트(6번)만 센다", async () => {
+  it("수요일(10-28)에 시작하는 기간의 주 묶음은 그 주 월요일이지만 기간 안의 이벤트(6번)만 세고, 일부만 찬 묶음으로 표시한다", async () => {
     const { body } = await report({ from: "2026-10-28", to: "2026-11-03", granularity: "week", metrics: ["events"], filters: noDst.filters, ...kst });
     expect(body.rows).toEqual([{ bucket: "2026-10-25T15:00:00.000Z", label: "2026-10-26", dimensions: {}, events: 1 }]);
+    // 이벤트가 없는 둘째 주도 목록에 있다(화면이 0으로 채운다)
+    expect(body.meta.buckets.map((b: { label: string; partial: boolean }) => [b.label, b.partial])).toEqual([
+      ["2026-10-26", true],
+      ["2026-11-02", true],
+    ]);
+  });
+});
+
+describe("보관 기간과 늦은 이벤트", () => {
+  it("시작이 보관 기간(07-29 0시 UTC)보다 앞서면 422 out_of_retention이다(한국 시각 07-29는 07-28 15시 UTC에 시작)", async () => {
+    const res = await report({ from: "2026-07-29", to: "2026-08-05", granularity: "day", ...kst });
+    expect(res).toEqual({ status: 422, body: { error: expect.any(String), code: "out_of_retention" } });
+    expect((await report({ from: "2026-07-30", to: "2026-08-05", granularity: "day", ...kst })).status).toBe(200);
+    expect((await report({ from: "2026-07-29", to: "2026-08-05", granularity: "day", timezone: "UTC" })).status).toBe(200);
+  });
+
+  it("끝이 최근 7일 안이면 provisional이고, 그보다 앞이면 아니다", async () => {
+    expect((await report({ from: "2026-10-01", to: "2026-10-19", granularity: "day", ...kst })).body.meta.provisional).toBe(false);
+    expect((await report({ from: "2026-10-01", to: "2026-10-20", granularity: "day", ...kst })).body.meta.provisional).toBe(true);
   });
 });
 
@@ -192,13 +228,13 @@ describe("설정과 실패", () => {
   it.each([
     ["허용 목록 밖의 차원", { dimensions: ["user_id"] }],
     ["허용 목록 밖의 시간대", { timezone: "Asia/Pyongyang" }],
-    ["93일", { from: "2026-08-01", to: "2026-11-01" }],
+    ["91일", { from: "2026-08-03", to: "2026-11-01" }],
   ])("%s는 400이다", async (_, patch) => {
     expect((await report({ from: "2026-10-27", to: "2026-10-27", granularity: "day", ...patch })).status).toBe(400);
   });
 
   it("행이 한도를 넘으면 잘라 주지 않고 422 too_many_rows다", async () => {
-    const small = buildApp(pool, {}, { reports: { maxRows: 2 } });
+    const small = buildApp(pool, {}, { reports: { maxRows: 2, asOf } });
     try {
       const res = await small.inject({
         method: "POST",
@@ -219,7 +255,7 @@ describe("설정과 실패", () => {
   ] as const)("%s에 닿으면 503 %s", async (_, reports, code) => {
     const owner = new pg.Client({ connectionString: db.owner });
     await owner.connect();
-    const limited = buildApp(pool, {}, { reports });
+    const limited = buildApp(pool, {}, { reports: { ...reports, asOf } });
     try {
       await owner.query("begin");
       await owner.query("lock table events in access exclusive mode");

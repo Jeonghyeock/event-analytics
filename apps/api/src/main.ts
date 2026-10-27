@@ -16,12 +16,14 @@ const host = process.env.HOST ?? "127.0.0.1";
 
 // 연결을 받기까지 5초를 넘기면 실패한다. 한도가 없으면 DB에 닿지 않을 때 /health가 503 대신 멈춰 있다.
 const pool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-api", connectionTimeoutMillis: 5_000 });
-const app = buildApp(pool, { logger: true }, { ingestWriteKey });
+// 리포트는 30초까지 연결을 쥘 수 있어 수집과 풀을 나눈다(DESIGN 10장 35).
+const reportPool = createPool({ connectionString: databaseUrl, application_name: "event-analytics-reports", max: 4, connectionTimeoutMillis: 5_000 });
+const app = buildApp(pool, { logger: true }, { ingestWriteKey, reportPool });
 // 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고한다(DESIGN 6.2).
 const stopWatch = startPartitionWatch(pool, app.log);
 app.addHook("onClose", async () => {
   stopWatch();
-  await pool.end();
+  await Promise.all([pool.end(), reportPool.end()]);
 });
 
 const shutdown = () => {
