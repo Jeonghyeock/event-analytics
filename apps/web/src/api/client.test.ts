@@ -14,6 +14,7 @@ const meta = {
   rollupWatermark: "2026-10-27T13:00:00.000Z",
   stale: false,
   provisional: true,
+  asOf: "2026-10-27T12:00:00.000Z",
   buckets: [],
 };
 
