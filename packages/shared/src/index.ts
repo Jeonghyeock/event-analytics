@@ -178,7 +178,12 @@ export const ReportResult = z.object({
     rangeStart: z.string(),
     rangeEnd: z.string(),
     rowCount: z.number().int(),
-    source: z.literal("raw"),
+    // rollup: 시간 집계 표(워터마크 앞) + 원본(워터마크 뒤). raw: 원본만(고유 사용자, 30분 단위 시간대)
+    source: z.enum(["rollup", "raw"]),
+    // rollup일 때의 워터마크(UTC ISO)
+    rollupWatermark: z.string().nullable(),
+    // 기간 안·워터마크 앞에 늦은 이벤트가 들어와 아직 다시 세지 않은 시간이 있다(다음 집계 작업까지 옛 값)
+    stale: z.boolean(),
     // 끝이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다(받을 기간 7일)
     provisional: z.boolean(),
     buckets: z.array(ReportBucket),

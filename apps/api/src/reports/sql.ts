@@ -1,4 +1,4 @@
-import type { Dimension, Metric, ReportBucket, ReportQuery, ReportRow } from "@event-analytics/shared";
+import type { Dimension, ReportBucket, ReportQuery, ReportRow } from "@event-analytics/shared";
 
 // 리포트 설정 → SQL(DESIGN 6.3, 10장 31~35). SQL 글자에는 아래 상수 표의 식별자만 들어가고, 설정의 값은 모두 매개변수로 넘긴다.
 
@@ -10,33 +10,33 @@ const COLUMNS: Record<Dimension, string> = {
   channel: "channel",
   campaign: "campaign",
 };
-// 지표 이름 → 집계 식. 고유 사용자 수는 묶음마다 원본에서 정확히 센다(가장 비싼 부분이라 요청할 때만).
-const METRIC_SQL: Record<Metric, string> = { events: "count(*)", users: "count(distinct user_id)" };
-const METRIC_ALIAS: Record<Metric, string> = { events: "m_events", users: "m_users" };
 // 묶음 단위와 벽시계 글자 모양. total은 기간 전체가 한 묶음이다.
 const UNITS = { hour: "hour", day: "day", week: "week" } as const;
 const STEPS = { hour: "1 hour", day: "1 day", week: "1 week" } as const;
 const LABELS = { hour: "YYYY-MM-DD HH24:MI", day: "YYYY-MM-DD", week: "YYYY-MM-DD" } as const;
+const METRIC_ALIAS = { events: "m_events", users: "m_users" } as const;
+// 시간 집계 표(UTC 정시)의 행을 그대로 묶을 수 있는 시간대: 정시가 UTC의 정시와 같은 곳(콜카타 +05:30만 아니다, DESIGN 10장 40).
+const WHOLE_HOUR_TIMEZONES = new Set(["UTC", "Asia/Seoul", "Asia/Tokyo", "Asia/Singapore", "Europe/London", "America/New_York", "America/Los_Angeles"]);
 
 export type ReportSql = { text: string; values: unknown[] };
+export type ReportSource = "rollup" | "raw";
 
-// $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록.
-// 기간: 리포트 시간대의 from 0시 이상, to 다음 날 0시 미만. at time zone과 3인자 date_trunc는 immutable이라
-// 매개변수여도 계획할 때 상수가 되어 가지를 친다(이름 없는 문장, 10장 26).
-// 기간: 리포트 시간대의 from 0시 이상, to 다음 날 0시 미만($1 from, $2 to, $3 시간대). 리포트 실행(run.ts)도 이 식을 쓴다.
+// 이벤트만 묻고 시간대가 정수 시간 오프셋이면 집계 표, 아니면 원본(DESIGN 6.4 리포트).
+export const reportSource = (q: ReportQuery): ReportSource =>
+  q.metrics.every((m) => m === "events") && WHOLE_HOUR_TIMEZONES.has(q.timezone) ? "rollup" : "raw";
+
+// 기간: 리포트 시간대의 from 0시 이상, to 다음 날 0시 미만($1 from, $2 to, $3 시간대). at time zone과 3인자 date_trunc는
+// immutable이라 매개변수여도 계획할 때 상수가 되어 가지를 친다(이름 없는 문장, 10장 26). 리포트 실행(run.ts)도 이 식을 쓴다.
 export const START = "($1::date::timestamp at time zone $3::text)";
 export const END = "(($2::date + 1)::timestamp at time zone $3::text)";
+// 집계 표의 워터마크. 한 문장 안에서 읽어 집계 표 부분·원본 부분과 한 스냅샷이다(10장 40).
+const WATERMARK = "(select watermark from rollup_state)";
 
-export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
+// $1 from(날짜), $2 to(날짜), $3 시간대, $4… 필터 값 목록. 열 이름은 상수 표에서만 온다(설정의 글자를 SQL에 넣지 않는다).
+export function buildReportSql(q: ReportQuery, limit: number, source: ReportSource = reportSource(q)): ReportSql {
   const values: unknown[] = [q.from, q.to, q.timezone];
-  const start = START;
-  const end = END;
-  const bucket = q.granularity === "total" ? start : `date_trunc('${UNITS[q.granularity]}', occurred_at, $3::text)`;
-  const dims = q.dimensions.map((d, i) => `${COLUMNS[d]} as d${i}`);
-  // 요청한 지표만 센다. 열 이름도 상수 표에서 온다(설정의 글자를 SQL에 넣지 않는다).
-  const metrics = q.metrics.map((m) => `${METRIC_SQL[m]} as ${METRIC_ALIAS[m]}`);
-  const where = [`occurred_at >= ${start}`, `occurred_at < ${end}`];
-  // null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다).
+  // null을 고르면 값이 없는 것도 남긴다(IN은 NULL과 맞지 않으므로 따로 묻는다). 집계 표에도 같은 열이 있다.
+  const filters: string[] = [];
   for (const f of q.filters) {
     const col = COLUMNS[f.dimension];
     const present = f.values.filter((v) => v !== null);
@@ -46,23 +46,63 @@ export function buildReportSql(q: ReportQuery, limit: number): ReportSql {
       conds.push(`${col} = any($${values.length}::text[])`);
     }
     if (present.length < f.values.length) conds.push(`${col} is null`);
-    where.push(conds.length === 1 ? conds[0]! : `(${conds.join(" or ")})`);
+    filters.push(conds.length === 1 ? conds[0]! : `(${conds.join(" or ")})`);
   }
-  const groupBy = ["1", ...q.dimensions.map((_, i) => String(i + 2))];
+  const bucketOf = (col: string) => (q.granularity === "total" ? START : `date_trunc('${UNITS[q.granularity]}', ${col}, $3::text)`);
+  const dims = q.dimensions.map((d, i) => `${COLUMNS[d]} as d${i}`);
   const dimCols = q.dimensions.map((_, i) => `d${i}`);
+  // 안쪽 무리: 묶음 + 차원(+ 사용자)
+  const groupBy = (extra = 0) => Array.from({ length: 1 + q.dimensions.length + extra }, (_, i) => String(i + 1)).join(", ");
+  const where = (col: string, from: string, to: string) => [`${col} >= ${from}`, `${col} < ${to}`, ...filters].join(" and ");
+  const wantsEvents = q.metrics.includes("events");
+
+  let inner: string;
+  if (source === "rollup") {
+    // [시작, min(끝, 워터마크))는 집계 표, [max(시작, 워터마크), 끝)는 원본. 두 부분을 합쳐 다시 묶는다.
+    inner = [
+      `select bucket${dimCols.map((c) => `, ${c}`).join("")}, sum(n) as m_events from (`,
+      `  select ${[`${bucketOf("hour")} as bucket`, ...dims, "events as n"].join(", ")}`,
+      `  from hourly_rollup where ${where("hour", START, `least(${END}, ${WATERMARK})`)}`,
+      "  union all",
+      `  select ${[`${bucketOf("occurred_at")} as bucket`, ...dims, "count(*) as n"].join(", ")}`,
+      `  from events where ${where("occurred_at", `greatest(${START}, ${WATERMARK})`, END)}`,
+      `  group by ${groupBy()}`,
+      `) u group by ${groupBy()}`,
+    ].join("\n");
+  } else if (q.metrics.includes("users")) {
+    // 고유 사용자: (묶음, 차원, 사용자)로 먼저 묶으면 그 단계가 병렬 부분 해시 집계가 된다. count(distinct)보다 4.6배 빠르다(10장 37).
+    inner = [
+      `select bucket${dimCols.map((c) => `, ${c}`).join("")}${wantsEvents ? ", sum(n) as m_events" : ""}, count(*) as m_users from (`,
+      `  select ${[`${bucketOf("occurred_at")} as bucket`, ...dims, "user_id", "count(*) as n"].join(", ")}`,
+      `  from events where ${where("occurred_at", START, END)}`,
+      `  group by ${groupBy(1)}`,
+      `) u group by ${groupBy()}`,
+    ].join("\n");
+  } else {
+    inner = [
+      `select ${[`${bucketOf("occurred_at")} as bucket`, ...dims, "count(*) as m_events"].join(", ")}`,
+      `from events where ${where("occurred_at", START, END)}`,
+      `group by ${groupBy()}`,
+    ].join("\n");
+  }
   const label = q.granularity === "total" ? "null::text" : `to_char(bucket at time zone $3::text, '${LABELS[q.granularity]}')`;
   const text = [
     `select bucket, ${label} as label${dimCols.map((c) => `, ${c}`).join("")}${q.metrics.map((m) => `, ${METRIC_ALIAS[m]}`).join("")}`,
-    "from (",
-    `  select ${[`${bucket} as bucket`, ...dims, ...metrics].join(", ")}`,
-    "  from events",
-    `  where ${where.join("\n    and ")}`,
-    `  group by ${groupBy.join(", ")}`,
-    ") s",
+    `from (${inner}) s`,
     `order by ${["bucket", ...dimCols].join(", ")}`,
     `limit ${Number(limit)}`,
   ].join("\n");
   return { text, values };
+}
+
+// 집계 표 경로의 상태: 워터마크와, 기간 안·워터마크 앞에 아직 다시 세지 않은 더러운 시간이 있는지(meta.stale).
+export function buildRollupMetaSql(q: ReportQuery): ReportSql {
+  return {
+    text: `select ${WATERMARK} as watermark,
+                  exists (select 1 from dirty_hours where hour >= ${START} and hour < least(${END}, ${WATERMARK})) as stale,
+                  $2::date as "to"`,
+    values: [q.from, q.to, q.timezone],
+  };
 }
 
 type RawRow = { bucket: Date; label: string | null; m_events?: number; m_users?: number } & Record<string, unknown>;

@@ -1,7 +1,7 @@
 import { ReportQuery } from "@event-analytics/shared";
 import { afterAll, describe, expect, inject, it } from "vitest";
 import { createPool } from "../db/pool.js";
-import { buildBucketsSql, buildReportSql, toReportBuckets } from "./sql.js";
+import { buildBucketsSql, buildReportSql, reportSource, toReportBuckets } from "./sql.js";
 
 // SQL 만들기(DESIGN 6.3, 10장 32). 값이 SQL 글자에 들어가지 않는지, 요청한 지표만 세는지, 만든 SQL이 실제로 도는지 본다.
 // 손으로 센 값과의 비교(A5)는 리포트 경로 테스트에서 한다.
@@ -32,9 +32,23 @@ describe("buildReportSql", () => {
     expect(onlyNull.values).toHaveLength(3);
   });
 
-  it("users를 고르지 않으면 count(distinct)를 하지 않는다", () => {
-    expect(buildReportSql(query(), 10).text).not.toContain("count(distinct");
-    expect(buildReportSql(query({ metrics: ["users"] }), 10).text).toContain("count(distinct user_id) as m_users");
+  it("이벤트만이고 정수 시간 오프셋이면 집계 표 + 원본 꼬리, 사용자나 30분 단위 시간대면 원본이다", () => {
+    expect(reportSource(query())).toBe("rollup");
+    expect(reportSource(query({ timezone: "America/New_York" }))).toBe("rollup");
+    expect(reportSource(query({ timezone: "Asia/Kolkata" }))).toBe("raw");
+    expect(reportSource(query({ metrics: ["events", "users"] }))).toBe("raw");
+    const { text } = buildReportSql(query(), 10);
+    expect(text).toContain("from hourly_rollup where hour >=");
+    expect(text).toContain("least((($2::date + 1)::timestamp at time zone $3::text), (select watermark from rollup_state))");
+    expect(text).toContain("from events where occurred_at >= greatest(");
+  });
+
+  it("고유 사용자는 count(distinct) 없이 (묶음, 차원, 사용자)로 먼저 묶는다", () => {
+    const { text } = buildReportSql(query({ metrics: ["events", "users"], dimensions: ["platform"] }), 10);
+    expect(text).not.toContain("count(distinct");
+    expect(text).toContain("platform as d0, user_id, count(*) as n");
+    expect(text).toContain("sum(n) as m_events, count(*) as m_users");
+    expect(buildReportSql(query({ metrics: ["users"] }), 10).text).not.toContain("m_events");
   });
 
   it("차원은 상수 표의 열 이름으로 묶는다", () => {
