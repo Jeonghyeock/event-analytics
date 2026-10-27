@@ -8,7 +8,8 @@ import { maintain } from "./partitions.js";
 const url = process.env.DATABASE_OWNER_URL;
 if (!url) throw new Error("DATABASE_OWNER_URL이 없습니다(.env 또는 환경 변수)");
 
-const client = new pg.Client({ connectionString: url, application_name: "event-analytics-maintain" });
+// keepAlive: 소리 없이 끊긴 연결에서 멈춰 다음 예약 실행이 건너뛰어지지 않게.
+const client = new pg.Client({ connectionString: url, application_name: "event-analytics-maintain", keepAlive: true });
 client.on("error", () => {});
 await client.connect();
 try {
