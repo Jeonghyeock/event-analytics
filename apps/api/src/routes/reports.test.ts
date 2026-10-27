@@ -214,10 +214,15 @@ describe("A5 — 시간대의 경계", () => {
 
 describe("보관 기간과 늦은 이벤트", () => {
   it("meta.asOf는 판단에 쓴 \"지금\"이다(넘기지 않으면 DB의 now())", async () => {
-    // 이 파일의 앱은 asOf를 넘긴다(위의 meta 비교). 넘기지 않으면 DB 시각이다.
-    const q = ReportQuery.parse({ metrics: ["events"], from: "2026-10-27", to: "2026-10-27", granularity: "day" });
+    // 이 파일의 앱은 asOf를 넘긴다(위의 meta 비교). 넘기지 않으면 DB 시각이다. 날짜는 실제 오늘(UTC)이다:
+    // 고정 날짜에 실제 "지금"을 쓰면 90일 뒤 보관 기간 밖이 되어 깨진다(코드 리뷰). 파티션이 없는 날도 0행이다.
+    const today = new Date().toISOString().slice(0, 10);
+    const q = ReportQuery.parse({ metrics: ["events"], from: today, to: today, granularity: "day", timezone: "UTC" });
+    const dbNow = async () => (await pool.query<{ t: Date }>("select now() as t")).rows[0]!.t.toISOString();
+    const before = await dbNow();
     const { meta } = await runReport(pool, q);
-    expect(Math.abs(Date.parse(meta.asOf) - Date.now())).toBeLessThan(60_000);
+    const after = await dbNow();
+    expect(before <= meta.asOf && meta.asOf <= after).toBe(true);
   });
 
   it("시작이 보관 기간(07-29 0시 UTC)보다 앞서면 422 out_of_retention이다(한국 시각 07-29는 07-28 15시 UTC에 시작)", async () => {
@@ -263,7 +268,7 @@ describe("설정과 실패", () => {
       });
       expect(res.statusCode).toBe(status);
       if (status === 200) expect(res.json().rows).toHaveLength(3);
-      else expect(res.json()).toEqual({ error: expect.any(String), code: "too_many_rows" });
+      else expect(res.json()).toEqual({ error: expect.stringContaining("단위를 넓히거나"), code: "too_many_rows" });
     } finally {
       await small.close();
     }
