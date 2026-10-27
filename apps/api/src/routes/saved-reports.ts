@@ -32,7 +32,11 @@ function toSavedReport(row: Row): SavedReport {
   };
 }
 
-const nameTaken = (err: unknown) => (err as { code?: string }).code === "23505";
+// 이름의 유일 제약만 409다(다른 유일 위반이 이름 겹침으로 잘못 읽히지 않게)
+const nameTaken = (err: unknown) => {
+  const e = err as { code?: string; constraint?: string };
+  return e.code === "23505" && e.constraint === "saved_reports_name_key";
+};
 const NAME_TAKEN = { error: "같은 이름의 저장한 리포트가 있습니다. 다른 이름을 쓰거나 덮어쓰세요", code: "name_taken" as const };
 const NOT_FOUND = { error: "저장한 리포트가 없습니다", code: "not_found" as const };
 
