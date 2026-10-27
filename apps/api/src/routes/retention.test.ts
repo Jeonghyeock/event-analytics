@@ -86,7 +86,14 @@ describe("손으로 센 리텐션(날마다 무리)", () => {
           { cohort: "2026-10-21", cohortStart: "2026-10-20T15:00:00.000Z", users: 4, returned: [0, 1, 0] },
           { cohort: "2026-10-22", cohortStart: "2026-10-21T15:00:00.000Z", users: 1, returned: [0, 0, 0] },
         ],
-        meta: { timezone: "Asia/Seoul", rangeStart: "2026-10-19T15:00:00.000Z", rangeEnd: "2026-10-22T15:00:00.000Z", days: 3, provisional: true },
+        meta: {
+          timezone: "Asia/Seoul",
+          rangeStart: "2026-10-19T15:00:00.000Z",
+          rangeEnd: "2026-10-22T15:00:00.000Z",
+          days: 3,
+          today: "2026-10-27",
+          provisional: true,
+        },
       },
     });
   });
@@ -124,6 +131,26 @@ describe("손으로 센 리텐션(날마다 무리)", () => {
       { cohort: "2026-10-27", cohortStart: "2026-10-26T15:00:00.000Z", users: 0, returned: [null, null, null] },
       { cohort: "2026-10-28", cohortStart: "2026-10-27T15:00:00.000Z", users: null, returned: [null, null, null] },
     ]);
+  });
+
+  it("\"오늘\"은 리포트 시간대의 날짜다(한국 시각 10-28 00:30 = UTC 10-27 15:30)", async () => {
+    const q = RetentionQuery.parse({ days: 3, from: "2026-10-25", to: "2026-10-28", timezone: "Asia/Seoul" });
+    const result = await runRetention(pool, q, { asOf: "2026-10-27T15:30:00Z" });
+    expect(result.meta.today).toBe("2026-10-28");
+    expect(result.rows.map((r) => [r.users, r.returned])).toEqual([
+      [1, [1, 0, null]],
+      [1, [0, null, null]],
+      [0, [null, null, null]],
+      // 오늘의 무리는 지금까지 센 값(0), 아직 오지 않은 날이 아니다
+      [0, [null, null, null]],
+    ]);
+  });
+
+  it("provisional은 마지막 칸의 날의 끝으로 판단한다(기간 끝이 아니라)", async () => {
+    // 10-10 무리, 2일째의 끝 10-13 0시(KST)는 "지금" − 7일(10-20 12:00 UTC)보다 앞
+    expect((await retention({ from: "2026-10-10", to: "2026-10-10", days: 2 })).body.meta.provisional).toBe(false);
+    // 10-18 무리, 7일째의 끝 10-26 0시(KST)는 뒤. 기간 끝(10-19 0시)으로 판단하면 false가 된다
+    expect((await retention({ from: "2026-10-18", to: "2026-10-18", days: 7 })).body.meta.provisional).toBe(true);
   });
 
   it("시작·돌아옴 이벤트를 고른다(signup → purchase)", async () => {

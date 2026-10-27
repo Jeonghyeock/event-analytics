@@ -282,6 +282,8 @@ export const RetentionResult = z.object({
     rangeStart: z.string(),
     rangeEnd: z.string(),
     days: z.number().int(),
+    // null 칸을 정한 "오늘"(리포트 시간대의 날짜). 이날과 그 뒤의 칸은 아직 모르고, 이날의 무리는 지금까지 센 값이다.
+    today: z.string(),
     // 마지막 칸의 날의 끝(to + 1 + days일 자정)이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다
     provisional: z.boolean(),
   }),

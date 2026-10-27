@@ -11,8 +11,9 @@ export type RetentionOptions = QueryLimits & { asOf?: string };
 
 export function runRetention(pool: pg.Pool, q: RetentionQuery, { asOf, ...limits }: RetentionOptions = {}): Promise<RetentionResult> {
   return inReportTransaction(pool, limits, async (client) => {
-    // 퍼널과 같은 까닭으로 중첩 반복 조인을 끈다(10장 47). user_id 인덱스가 없어 중첩 반복은 안쪽을 거듭 훑고, 조인 조건의
-    // 날짜 차이 범위(1~N)에 계획기가 기본 선택도를 써 통계가 있어도 그것을 고를 수 있다.
+    // 퍼널과 같은 위험에 대비해 중첩 반복 조인을 끈다(10장 47). 다만 리텐션은 안쪽이 원본이 아니라 미리 묶은 돌아옴(b)이라,
+    // 개발 DB와 통계 없는 DB의 14가지 모양에서 계획이 켜도 꺼도 같았다(병합·해시 조인, 코드 리뷰). 7단계에서 user_id 인덱스를
+    // 더하면 이 설정을 다시 본다(그 인덱스가 여는 계획을 이 설정이 막는다).
     await client.query("select set_config('enable_nestloop', 'off', true)");
     // today: "지금"의 리포트 시간대 날짜(그날과 그 뒤의 칸은 아직 모른다). provisional: 마지막 칸의 날의 끝이 최근 7일 안.
     const range = await client.query<{ from: Date; to: Date; retained_from: Date; today: string; provisional: boolean }>(
@@ -29,7 +30,7 @@ export function runRetention(pool: pg.Pool, q: RetentionQuery, { asOf, ...limits
     const dayRows = (await client.query<{ cohort: string; start: Date }>(days.text, days.values)).rows;
     return {
       rows: toRetentionRows(q, dayRows, countRows, today),
-      meta: { timezone: q.timezone, rangeStart: from.toISOString(), rangeEnd: to.toISOString(), days: q.days, provisional },
+      meta: { timezone: q.timezone, rangeStart: from.toISOString(), rangeEnd: to.toISOString(), days: q.days, today, provisional },
     };
   });
 }
