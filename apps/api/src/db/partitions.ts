@@ -146,8 +146,9 @@ export type MaintainResult = { created: string[]; finalized: string[]; dropped: 
 
 // 부모 표(events)의 통계(DESIGN 6.2 5단계, 10장 62). autovacuum은 파티션 부모를 분석하지 않는다(PostgreSQL의 설계).
 // 부모의 통계는 파티션을 가로지르는 묶기·조인의 어림에 쓰이고, 없으면 기본값(무리 200 × 200 = 4만)이 된다. 리텐션 31일은 그 어림으로
-// 병렬 해시 묶기를 골라 리더의 마지막 묶기가 30초를 넘겼다(실제 무리 115만, 7단계 측정). ONLY: 잎은 다시 분석하지 않는다(autovacuum의 일).
-// 부모에 ShareUpdateExclusiveLock을 건다(수집·리포트는 막지 않는다). 측정 실행기도 복제한 뒤 이것을 부른다(관리 작업이 하는 일과 같게).
+// 병렬 해시 묶기를 골라 리더의 마지막 묶기가 문장 한도 30초를 넘겼다(실제 무리 115만~237만, 7단계 측정). ONLY: 잎은 다시 분석하지 않는다
+// (autovacuum의 일). 부모에 ShareUpdateExclusiveLock을 건다(수집·리포트는 막지 않는다). 측정 실행기도 복제한 뒤 이것을 부른다(관리 작업이
+// 하는 일과 같게). 권한이 없으면 ANALYZE는 경고만 내고 건너뛰지만, 관리 작업은 소유자 확인(checkOwner) 뒤에 돈다.
 export async function analyzeParent(client: pg.ClientBase) {
   await client.query("ANALYZE ONLY public.events");
 }
@@ -224,7 +225,7 @@ export async function maintain(
       }
     });
 
-    // 붙이고 뗀 뒤의 파티션들로 센다
+    // 붙이고 뗀 뒤의 파티션들로 센다. analyzed는 ANALYZE가 오류 없이 끝났다는 뜻이다(행이 없으면 통계는 생기지 않는다).
     await step("부모 통계", async () => {
       await withLockRetry(() => analyzeParent(client), retryDelaysMs);
       result.analyzed = true;

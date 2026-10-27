@@ -119,7 +119,8 @@ export async function loadDatabaseState(url: string) {
               min(substr(c.relname, 9)) as first_day, max(substr(c.relname, 9)) as last_day
          from pg_inherits i join pg_class c on c.oid = i.inhrelid where i.inhparent = 'events'::regclass`,
     );
-    // 부모(events)의 통계가 있는지: 운영 서버에서는 없다(자동으로 분석되지 않음). 후보 "부모 표의 통계"의 출발점이다.
+    // 부모(events)의 통계가 있는지: 자동으로 분석되지 않아 템플릿에는 없고(고치기 전의 운영), 고친 뒤에는 복제가 관리 작업처럼 분석한다(10장 62).
+    // 회차마다 남겨, 전후 회차를 맞는 코드로 돌렸는지 본다.
     const parent = await one<{ stats: number }>("select count(*)::int as stats from pg_stats where schemaname = 'public' and tablename = 'events'");
     // public의 일반 표마다 VM·죽은 행·통계·autovacuum. 파티션은 하나로 묶어 가장 덜 된 값을 쓴다.
     const tables = (

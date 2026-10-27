@@ -48,7 +48,7 @@ describe("측정 템플릿", () => {
     const parts = state.tables.find((t) => t.name === "events_*")!;
     // VACUUM으로 가시성 맵이 섰고(행이 있는 파티션의 모든 페이지) 모든 파티션에 통계가 있다
     expect(parts).toMatchObject({ autovacuum_off: true, tables: 3, with_stats: 3, visible_min: 1 });
-    // 부모(events)는 분석하지 않는다(운영 서버처럼, 후보 "부모 표의 통계"의 출발점)
+    // 템플릿에서는 부모(events)를 분석하지 않는다(고치기 전의 운영, 후보 "부모 표의 통계"의 출발점)
     expect(state.parentStats).toBe(0);
     expect(state.settings).toHaveProperty("io_method");
 

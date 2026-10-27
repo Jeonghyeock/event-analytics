@@ -248,6 +248,25 @@ describe("관리 작업", () => {
     expect(rows).toEqual([{ leaf: 0 }]);
   });
 
+  it("부모 통계가 잠금 대기에 닿으면 그 단계만 실패로 남는다(다른 단계와 advisory lock은 그대로)", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await maintain(owner, { today, ...fast });
+    // 만들 것도 뗄 것도 없으니 부모의 ShareUpdateExclusiveLock을 바라는 것은 ANALYZE뿐이다
+    const holder = await connect(db.owner);
+    await holder.query("begin");
+    await holder.query("lock table events in share update exclusive mode");
+    expect(await maintain(owner, { today, ...fast })).toEqual({
+      created: [],
+      finalized: [],
+      dropped: [],
+      analyzed: false,
+      errors: [expect.stringMatching(/^부모 통계: /)],
+    });
+    await holder.query("commit");
+    expect((await maintain(owner, { today, ...fast })).analyzed).toBe(true);
+  });
+
   it("부른 쪽이 트랜잭션 안이면 거절한다(우리 COMMIT이 그 트랜잭션을 끝내 버리므로)", async () => {
     const db = await freshDatabase();
     const owner = await connect(db.owner);
