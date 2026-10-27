@@ -1,5 +1,5 @@
 import type { Metric, ReportQuery, ReportResult } from "@event-analytics/shared";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState } from "react";
 import { runReport } from "../api/endpoints";
 import { BarChart } from "../components/BarChart";
@@ -14,6 +14,11 @@ import styles from "./ReportsPage.module.css";
 // 리포트 화면(DESIGN 6.7): 설정 → 그래프와 표. 다시 셀 때는 앞의 결과를 흐리게 둔다(자리가 튀지 않게).
 export function ReportsPage() {
   const [query, setQuery] = useState<ReportQuery | null>(null);
+  // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다. stale을 본 뒤 다시 세는 길, 코드 리뷰).
+  const submit = (q: ReportQuery) => {
+    if (query !== null && hashKey(["report", q]) === hashKey(["report", query])) void report.refetch();
+    else setQuery(q);
+  };
   const report = useQuery({
     queryKey: ["report", query],
     enabled: query !== null,
@@ -26,7 +31,7 @@ export function ReportsPage() {
   return (
     <>
       <h1>리포트</h1>
-      <ReportForm initial={initial} onSubmit={setQuery} />
+      <ReportForm initial={initial} onSubmit={submit} />
       <section className={styles.result} aria-label="결과" aria-busy={report.isFetching}>
         {query === null ? (
           <p className={styles.muted}>설정을 고르고 "보기"를 누르세요.</p>
@@ -50,7 +55,8 @@ function ReportView({ query, result }: { query: ReportQuery; result: ReportResul
   const [metric, setMetric] = useState<Metric>(query.metrics[0]!);
   const shown: Metric = query.metrics.includes(metric) ? metric : query.metrics[0]!;
   const data = useMemo(() => buildChartData(query, result), [query, result]);
-  // 색은 계열을 따라간다: 다시 세어도 남은 계열은 같은 색이다
+  // 색은 계열을 따라간다: 다시 세어도 남은 계열은 같은 색이다. 렌더 중에 ref를 쓰지만 assignColors는 같은 입력에 같은 결과라
+  // StrictMode의 두 번 호출에도 안전하다. 읽는 중·실패를 거쳐 이 화면이 새로 붙으면 기억은 처음부터다.
   const slotsRef = useRef<ReadonlyMap<string, number>>(new Map());
   const slots = useMemo(() => {
     slotsRef.current = assignColors(
@@ -78,10 +84,19 @@ function ReportView({ query, result }: { query: ReportQuery; result: ReportResul
           ))}
         </div>
       )}
-      {query.granularity === "total" ? (
+      {result.rows.length === 0 ? (
+        <p className={styles.muted}>이 기간에 이벤트가 없습니다.</p>
+      ) : query.granularity === "total" ? (
         <BarChart
           title={title}
-          bars={series.map((s) => ({ key: s.key, label: s.label, value: s.values[shown]![0] ?? 0, color: colorOf(s.key, slots) }))}
+          bars={series.map((s) => ({
+            key: s.key,
+            label: s.label,
+            value: s.values[shown]![0] ?? 0,
+            color: colorOf(s.key, slots),
+            // 기간이 오늘을 품으면 전체 묶음도 진행 중이다
+            ...(data.buckets[0]?.state === "current" ? { note: "진행 중" } : {}),
+          }))}
         />
       ) : (
         <TimeSeriesChart
@@ -98,7 +113,7 @@ function ReportView({ query, result }: { query: ReportQuery; result: ReportResul
           {data.rankedBy === "users" && " 순위는 묶음별 사용자 수의 합입니다(고유 사용자 수가 아닙니다)."}
         </p>
       )}
-      <ReportTable query={query} result={result} />
+      {result.rows.length > 0 && <ReportTable query={query} result={result} />}
     </>
   );
 }

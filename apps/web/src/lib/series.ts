@@ -103,7 +103,25 @@ export function buildChartData(q: ReportQuery, result: ReportResult, topN = TOP_
 }
 
 // 표의 행: 서버의 행 그대로(묶음 × 계열, 긴 표). 진행 중인 묶음과 일부만 찬 첫·끝 묶음에 표시를 붙인다.
-export type TableRow = { bucket: string; label: string; note: string | null; series: string; events?: number; users?: number };
+// 이벤트가 없는 묶음은 행이 없다(빈 묶음과 아직 오지 않은 묶음은 그래프가 보인다).
+export type TableRow = {
+  bucket: string;
+  label: string;
+  note: string | null;
+  seriesKey: string;
+  series: string;
+  events?: number;
+  users?: number;
+};
+
+// 일부만 찬 묶음의 표시. 앞이 잘린 것은 묶음이 기간 시작보다 앞선 것이다(글자 비교). 앞이 잘리지 않았는데 일부면 뒤가 잘린 것이다.
+// 묶음 하나가 앞이 잘렸으면 뒤도 잘렸는지 알 수 없어(날짜 계산을 하지 않는다) 기간 전체를 적는다(코드 리뷰).
+function partialNote(q: ReportQuery, b: ChartBucket, i: number, last: number, rangeStart: string): string | null {
+  if (!b.partial) return null;
+  const frontCut = b.bucket < rangeStart;
+  if (frontCut) return i === last ? `일부(${q.from}~${q.to})` : `일부(${q.from}부터)`;
+  return `일부(${q.to}까지)`;
+}
 
 export function buildTable(q: ReportQuery, result: ReportResult): { rows: TableRow[]; eventsTotal: number | null } {
   const buckets = statesOf(result);
@@ -112,13 +130,14 @@ export function buildTable(q: ReportQuery, result: ReportResult): { rows: TableR
   const rows = result.rows.map((row) => {
     const found = byBucket.get(row.bucket);
     const notes: string[] = [];
-    if (found?.b.partial && found.i === 0 && q.granularity !== "total") notes.push(`일부(${q.from}부터)`);
-    else if (found?.b.partial && found.i === last) notes.push(`일부(${q.to}까지)`);
+    const partial = found ? partialNote(q, found.b, found.i, last, result.meta.rangeStart) : null;
+    if (partial) notes.push(partial);
     if (found?.b.state === "current") notes.push("진행 중");
     return {
       bucket: row.bucket,
       label: found?.b.label ?? row.label,
       note: notes.length > 0 ? notes.join(", ") : null,
+      seriesKey: seriesKey(q, row.dimensions),
       series: seriesLabel(q, row.dimensions),
       ...(row.events !== undefined ? { events: row.events } : {}),
       ...(row.users !== undefined ? { users: row.users } : {}),
@@ -154,12 +173,12 @@ const full = new Intl.NumberFormat("ko-KR");
 export const formatCompact = (n: number) => compact.format(n);
 export const formatCount = (n: number) => full.format(n);
 
-// 축의 눈금: 0부터 깔끔한 수로 4칸쯤
+// 축의 눈금: 0부터 깔끔한 정수로 4칸쯤(수는 셈이라 소수 눈금이 없다)
 export function niceTicks(max: number, count = 4): number[] {
   if (max <= 0) return [0, 1];
   const raw = max / count;
   const power = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].map((m) => m * power).find((s) => s >= raw)!;
+  const step = [1, 2, 2.5, 5, 10, 20].map((m) => m * power).find((s) => s >= raw && Number.isInteger(s))!;
   const ticks: number[] = [];
   for (let v = 0; v < max + step; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return ticks;

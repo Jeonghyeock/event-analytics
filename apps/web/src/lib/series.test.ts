@@ -120,10 +120,38 @@ describe("buildTable", () => {
       { bucket: weeks[0]!.bucket, label: "2026-10-19", dimensions: {}, events: 4, users: 2 },
       { bucket: weeks[1]!.bucket, label: "2026-10-26", dimensions: {}, events: 3, users: 2 },
     ];
-    const table = buildTable(query, { rows, meta: meta({ buckets: weeks }) });
+    const table = buildTable(query, { rows, meta: meta({ buckets: weeks, rangeStart: "2026-10-20T15:00:00.000Z" }) });
     expect(table.rows.map((r) => r.note)).toEqual(["일부(2026-10-21부터)", "일부(2026-10-27까지), 진행 중"]);
     expect(table.eventsTotal).toBe(7);
     expect(buildTable(q({ metrics: ["users"] }), { rows: [], meta: meta() }).eventsTotal).toBeNull();
+  });
+
+  it("묶음 하나뿐인 일부 주: 월요일에 시작하면 끝이 잘린 것이고, 주 가운데서 시작하면 기간 전체를 적는다", () => {
+    const week = { bucket: "2026-10-25T15:00:00.000Z", label: "2026-10-26", utcOffset: "+09:00", partial: true };
+    const rows = [{ bucket: week.bucket, label: "2026-10-26", dimensions: {}, events: 1 }];
+    const note = (from: string, to: string, rangeStart: string) =>
+      buildTable(q({ granularity: "week", from, to }), { rows, meta: meta({ buckets: [week], rangeStart, asOf: "2026-12-01T00:00:00.000Z" }) }).rows[0]!.note;
+    // 월요일(10-26)~수요일: 묶음 = 기간 시작
+    expect(note("2026-10-26", "2026-10-28", "2026-10-25T15:00:00.000Z")).toBe("일부(2026-10-28까지)");
+    // 수요일(10-28)~금요일: 묶음이 기간 시작보다 앞
+    expect(note("2026-10-28", "2026-10-30", "2026-10-27T15:00:00.000Z")).toBe("일부(2026-10-28~2026-10-30)");
+  });
+});
+
+describe("뉴욕 일광 절약 시간이 끝나는 날", () => {
+  it("두 01:00의 값은 순간을 키로 따로 선다", () => {
+    const buckets = [
+      { bucket: "2026-11-01T05:00:00.000Z", label: "2026-11-01 01:00", utcOffset: "-04:00", partial: false },
+      { bucket: "2026-11-01T06:00:00.000Z", label: "2026-11-01 01:00", utcOffset: "-05:00", partial: false },
+    ];
+    const rows = [
+      { bucket: buckets[0]!.bucket, label: "2026-11-01 01:00", dimensions: {}, events: 5 },
+      { bucket: buckets[1]!.bucket, label: "2026-11-01 01:00", dimensions: {}, events: 7 },
+    ];
+    const range = { rangeStart: "2026-11-01T05:00:00.000Z", rangeEnd: "2026-11-01T07:00:00.000Z", asOf: "2026-12-01T00:00:00.000Z" };
+    const data = buildChartData(q({ granularity: "hour", timezone: "America/New_York" }), { rows, meta: meta({ buckets, ...range }) });
+    expect(data.series[0]!.values.events).toEqual([5, 7]);
+    expect(data.buckets.map((b) => b.label)).toEqual(["2026-11-01 01:00 (-04:00)", "2026-11-01 01:00 (-05:00)"]);
   });
 });
 
@@ -145,9 +173,12 @@ describe("assignColors", () => {
 });
 
 describe("niceTicks", () => {
-  it("0부터 깔끔한 수로 최댓값을 덮는다", () => {
-    expect(niceTicks(9)).toEqual([0, 2.5, 5, 7.5, 10]);
+  it("0부터 깔끔한 정수로 최댓값을 덮는다(셈이라 소수 눈금이 없다)", () => {
+    expect(niceTicks(9)).toEqual([0, 5, 10]);
     expect(niceTicks(1234)).toEqual([0, 500, 1000, 1500]);
+    expect(niceTicks(100)).toEqual([0, 25, 50, 75, 100]);
+    expect(niceTicks(2)).toEqual([0, 1, 2]);
+    expect(niceTicks(1)).toEqual([0, 1]);
     expect(niceTicks(0)).toEqual([0, 1]);
   });
 });

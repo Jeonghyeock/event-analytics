@@ -150,4 +150,50 @@ describe("ReportsPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "보기" }));
     expect(requests.at(-1)).toMatchObject({ filters: [{ dimension: "channel", values: [null] }] });
   });
+
+  it("고른 필터 값이 기간을 바꿔 목록에서 사라져도 위에 보이고 풀 수 있다", async () => {
+    // 10-22부터는 naver가 없다
+    handler = (body) =>
+      body.granularity === "total"
+        ? {
+            status: 200,
+            body: {
+              rows: (body.from === "2026-10-21" ? ["naver", "google"] : ["google"]).map((c) => ({ bucket: meta.rangeStart, label: "", dimensions: { channel: c }, events: 1 })),
+              meta,
+            },
+          }
+        : { status: 200, body: { rows: [], meta } };
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "필터 더하기" }));
+    fireEvent.change(screen.getByLabelText("차원"), { target: { value: "channel" } });
+    await userEvent.click(await screen.findByLabelText(/^naver/));
+    fireEvent.change(screen.getByLabelText("시작"), { target: { value: "2026-10-22" } });
+    await screen.findByText("(이 기간에 없음)");
+    const values = screen.getByRole("list", { name: "채널 값" });
+    expect(within(values).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["naver (이 기간에 없음)", "google (1)"]);
+    await userEvent.click(within(values).getByLabelText(/^naver/));
+    expect(screen.getByText("값을 하나 이상 고르세요.")).toBeTruthy();
+  });
+
+  it("같은 설정으로 다시 \"보기\"를 누르면 다시 센다", async () => {
+    handler = () => ({ status: 200, body: { rows: [], meta } });
+    renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "보기" }));
+    await screen.findByText("이 기간에 이벤트가 없습니다.");
+    await userEvent.click(screen.getByRole("button", { name: "보기" }));
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+  });
+
+  it("양식의 오류는 한국어로, 어느 칸인지 붙여 하나씩 알린다", async () => {
+    handler = () => ({ status: 200, body: { rows: [], meta } });
+    renderPage();
+    fireEvent.click(screen.getByLabelText("이벤트 수"));
+    await userEvent.click(screen.getByRole("button", { name: "필터 더하기" }));
+    await userEvent.click(screen.getByRole("button", { name: "보기" }));
+    const items = within(await screen.findByRole("alert")).getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toContain("필터: 값을 하나 이상 고르세요");
+    expect(items.some((t) => t?.startsWith("지표: "))).toBe(true);
+    expect(items.join(" ")).not.toMatch(/Too small|expected/);
+    expect(requests.filter((r) => r.granularity !== "total")).toHaveLength(0);
+  });
 });

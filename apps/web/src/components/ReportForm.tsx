@@ -1,6 +1,7 @@
 import { DIMENSIONS, GRANULARITIES, type Metric, ReportQuery, TIMEZONES } from "@event-analytics/shared";
 import { useId, useState } from "react";
 import { DIMENSION_LABELS, GRANULARITY_LABELS, lastDays, type ReportForm as Form } from "../lib/form";
+import { issueMessages } from "../lib/issues";
 import { METRIC_LABELS } from "../lib/series";
 import { FilterEditor } from "./FilterEditor";
 import styles from "./Form.module.css";
@@ -33,7 +34,7 @@ export function ReportForm({ initial, onSubmit }: { initial: Form; onSubmit: (q:
         e.preventDefault();
         const parsed = ReportQuery.safeParse(form);
         if (!parsed.success) {
-          setErrors(parsed.error.issues.map((i) => i.message));
+          setErrors(issueMessages(parsed.error.issues));
           return;
         }
         setErrors([]);
@@ -92,7 +93,8 @@ export function ReportForm({ initial, onSubmit }: { initial: Form; onSubmit: (q:
               onChange={(e) => setDimension(slot, e.target.value)}
             >
               <option value="">없음</option>
-              {DIMENSIONS.map((d) => (
+              {/* 차원 2에는 차원 1과 같은 것을 고를 수 없다 */}
+              {DIMENSIONS.filter((d) => slot === 0 || d !== dimensions[0]).map((d) => (
                 <option key={d} value={d}>
                   {DIMENSION_LABELS[d]}
                 </option>
