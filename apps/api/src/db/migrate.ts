@@ -94,7 +94,7 @@ export async function runMigrations(connectionString: string, { folder = migrati
 }
 
 // 슈퍼유저가 돌리면 표와 기본 권한(ALTER DEFAULT PRIVILEGES)의 주인이 슈퍼유저가 되어, 소유자가 뒤에 만든 표에 앱 권한이 붙지 않는다.
-async function checkOwner(client: pg.Client) {
+export async function checkOwner(client: pg.ClientBase) {
   const { rows } = await client.query<{ owner: boolean; superuser: boolean }>(
     `select current_user = pg_get_userbyid(d.datdba) as owner, r.rolsuper as superuser
        from pg_database d, pg_roles r
