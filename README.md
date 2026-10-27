@@ -38,6 +38,8 @@ npm run rollup:run -w @event-analytics/api     # 시간 집계 표 채우기(서
 npm test                                     # 템플릿 DB를 복제한 테스트 DB에서 돌고, 끝나면 지운다
 npm run dev                                  # API: http://127.0.0.1:3002
 npm run dev -w @event-analytics/web           # 화면: http://localhost:5180(/api를 API로 넘긴다)
+npm run test:e2e -w @event-analytics/web      # E2E: 전용 DB(event_analytics_e2e)를 새로 만들고 API 3102·화면 5175를 띄워 돈다
+                                             # (처음 한 번: npx playwright install chromium)
 ```
 
 `db:maintain`은 하루 한 번 돌린다(cron, Windows 작업 스케줄러). 앞으로 7일치를 미리 만들므로 며칠 멈춰도 수집은 계속된다. 서버는 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고 로그를 남긴다.
