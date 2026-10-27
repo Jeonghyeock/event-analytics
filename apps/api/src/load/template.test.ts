@@ -44,19 +44,35 @@ describe("측정 템플릿", () => {
     expect(state.partitions).toBe(3);
     expect(Math.round(state.eventRows)).toBe(3_000);
     const parts = state.tables.find((t) => t.name === "events_*")!;
-    expect(parts).toMatchObject({ autovacuum_off: true });
-    // VACUUM으로 가시성 맵이 섰다(행이 있는 파티션의 모든 페이지)
-    expect(parts.visible_min).toBe(1);
-    expect(parts.analyzed_min).not.toBeNull();
+    // VACUUM으로 가시성 맵이 섰고(행이 있는 파티션의 모든 페이지) 모든 파티션에 통계가 있다
+    expect(parts).toMatchObject({ autovacuum_off: true, tables: 3, with_stats: 3, visible_min: 1 });
+    // 부모(events)는 분석하지 않는다(운영 서버처럼, 후보 "부모 표의 통계"의 출발점)
+    expect(state.parentStats).toBe(0);
     expect(state.settings).toHaveProperty("io_method");
 
     const url = await cloneLoadDatabase(ownerUrl, { template, target });
     expect(url).toBe(withDatabase(ownerUrl, target));
     const cloned = await loadDatabaseState(url);
-    // 오늘부터 앞으로 7일이 더해졌다
-    expect(cloned.partitions).toBe(3 + 8);
-    expect(cloned.days.last).toBe(partitionName(addDays(today, 7)).slice(8));
+    // 관리 작업과 같은 범위(지난 7일 ~ 앞으로 7일)를 만들었다. 오늘은 복제한 뒤 다시 읽는다(테스트 중에 UTC 자정을 넘어도 맞게).
+    const client = new pg.Client({ connectionString: url });
+    await client.connect();
+    const cloneToday = await dbToday(client);
+    await client.end();
+    expect(cloned.days).toEqual({
+      first: partitionName(addDays(cloneToday, -7)).slice(8),
+      last: partitionName(addDays(cloneToday, 7)).slice(8),
+    });
+    // 새로 만든 파티션도 autovacuum이 꺼져 있다(LIKE로는 이어받지 않는다)
+    expect(cloned.tables.find((t) => t.name === "events_*")).toMatchObject({ autovacuum_off: true });
     expect(cloned.dirtyHours).toBe(0);
+    // 아직 분석하지 않은 새 파티션(reltuples = -1)은 행 수를 줄이지 않는다
+    expect(Math.round(cloned.eventRows)).toBe(3_000);
+  });
+
+  it("원본과 대상이 같으면 지우기 전에 거절한다", async () => {
+    await expect(cloneLoadDatabase(inject("ownerDatabaseUrl"), { template: "event_analytics_same", target: "event_analytics_same" })).rejects.toThrow(
+      /원본과 대상이 같습니다/,
+    );
   });
 
   // PostgreSQL은 원본의 연결이 사라지길 5초 기다린 뒤 실패한다
