@@ -1,7 +1,7 @@
 import { buildApp } from "./app.js";
 import { createPool } from "./db/pool.js";
 
-// 서버는 앱 role(DML만)로 접속한다. 마이그레이션은 소유자 주소(DATABASE_OWNER_URL)로 따로 돌린다.
+// 서버는 앱 role(DML만)로 접속한다. 마이그레이션은 소유자 주소로 따로 돌린다(db:migrate).
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("DATABASE_URL이 없습니다(.env 또는 환경 변수)");
 
