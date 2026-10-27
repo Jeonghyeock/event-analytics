@@ -9,11 +9,11 @@ import { reportRoutes } from "./routes/reports.js";
 
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
 // ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
-// reports는 리포트의 한도(행 수, 시간)를 테스트가 바꿀 때만 넘긴다.
+// reportPool은 리포트 전용 풀이다(없으면 pool을 함께 쓴다, 테스트). reports는 리포트의 한도와 "지금"을 테스트가 바꿀 때만 넘긴다.
 export function buildApp(
   pool: pg.Pool,
   options: FastifyServerOptions = {},
-  services: { ingestWriteKey?: string; reports?: ReportOptions } = {},
+  services: { ingestWriteKey?: string; reportPool?: pg.Pool; reports?: ReportOptions } = {},
 ) {
   const app = Fastify(options).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
@@ -22,6 +22,9 @@ export function buildApp(
   // 풀에서 쉬는 연결이 끊기면(DB 재시작, pg_terminate_backend) 풀이 'error'를 낸다. 듣는 쪽이 없으면 프로세스가 죽는다.
   // 끊긴 연결은 풀이 버리고 다음 요청에 새로 맺으므로 로그만 남긴다.
   pool.on("error", (err) => app.log.error({ err }, "풀의 쉬는 연결이 끊김"));
+  if (services.reportPool && services.reportPool !== pool) {
+    services.reportPool.on("error", (err) => app.log.error({ err }, "리포트 풀의 쉬는 연결이 끊김"));
+  }
 
   // 5xx는 오류 내용을 로그에만 남기고 응답에는 싣지 않는다(SQL 문장과 파라미터가 들어 있을 수 있다).
   // 4xx(요청 검증 실패 등)는 무엇이 틀렸는지 알려 준다.
@@ -48,7 +51,7 @@ export function buildApp(
   );
 
   app.register(ingestRoutes, { pool, writeKey: services.ingestWriteKey ?? randomBytes(32).toString("hex") });
-  app.register(reportRoutes, { pool, options: services.reports });
+  app.register(reportRoutes, { pool: services.reportPool ?? pool, options: services.reports });
 
   return app;
 }
