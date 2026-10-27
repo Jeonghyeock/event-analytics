@@ -1,6 +1,6 @@
 import pg from "pg";
 import { afterAll, describe, expect, inject, it } from "vitest";
-import { addDays, partitionName, utcDay } from "./partitions.js";
+import { addDays, partitionName } from "./partitions.js";
 import { createPool } from "./pool.js";
 
 // 합격 기준 A3: 하루 범위의 리포트는 그날의 파티션만 읽는다(DESIGN 6.2, 10장 26). 실행 계획에 나오는 파티션을 센다.
@@ -26,7 +26,8 @@ async function explain(client: pg.ClientBase | pg.Pool, sql: string, params: unk
   return partitionsIn(rows[0]!["QUERY PLAN"][0]!.Plan);
 }
 
-const today = utcDay(new Date());
+// 테스트 준비가 파티션을 만든 날. 이 파일이 자정 뒤에 불려도 같은 날을 쓴다.
+const today = inject("partitionDay");
 const all = Array.from({ length: 11 }, (_, i) => partitionName(addDays(today, i - 8)));
 
 describe("A3 — 가지치기", () => {
@@ -35,7 +36,7 @@ describe("A3 — 가지치기", () => {
       `${today}T00:00:00Z`,
       `${addDays(today, 1)}T00:00:00Z`,
     ]);
-    expect(plan.partitions).toEqual([partitionName(today)]);
+    expect(plan).toEqual({ partitions: [partitionName(today)], removed: 0 });
   });
 
   it("한국 시각의 하루는 UTC로 두 날에 걸쳐 두 파티션을 읽는다", async () => {
@@ -43,7 +44,7 @@ describe("A3 — 가지치기", () => {
       `${today}T00:00:00+09:00`,
       `${addDays(today, 1)}T00:00:00+09:00`,
     ]);
-    expect(plan.partitions).toEqual([partitionName(addDays(today, -1)), partitionName(today)]);
+    expect(plan).toEqual({ partitions: [partitionName(addDays(today, -1)), partitionName(today)], removed: 0 });
   });
 
   // 일반 계획은 값을 모른 채 만든 계획이라 모든 파티션을 담고, 실행할 때 값을 보고 나머지를 뺀다.
