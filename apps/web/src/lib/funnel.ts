@@ -5,7 +5,7 @@ import type { FunnelResult } from "@event-analytics/shared";
 export type StepView = {
   name: string;
   users: number;
-  // 앞 단계 대비, 1단계 대비. 나눌 수가 0이면 null("—")이다.
+  // 앞 단계 대비(1단계는 null, 앞 단계가 없다), 1단계 대비(1단계는 100%). 나눌 수가 0이면 null("—")이다.
   fromPrevious: number | null;
   fromFirst: number | null;
 };
@@ -17,7 +17,7 @@ export function stepViews(steps: readonly string[], counts: readonly number[]): 
     name,
     users: counts[i] ?? 0,
     fromPrevious: i === 0 ? null : rate(counts[i] ?? 0, counts[i - 1]),
-    fromFirst: i === 0 ? null : rate(counts[i] ?? 0, counts[0]),
+    fromFirst: rate(counts[i] ?? 0, counts[0]),
   }));
 }
 
@@ -40,4 +40,7 @@ export const WINDOW_PRESETS = [
   { minutes: 10_080, label: "7일" },
 ] as const;
 
-export const windowLabel = (minutes: number) => WINDOW_PRESETS.find((p) => p.minutes === minutes)?.label ?? `${minutes}분`;
+// 고를 것에 없는 값(저장한 설정 등)도 읽기 쉬운 단위로 적는다
+export const windowLabel = (minutes: number) =>
+  WINDOW_PRESETS.find((p) => p.minutes === minutes)?.label ??
+  (minutes % 1_440 === 0 ? `${minutes / 1_440}일` : minutes % 60 === 0 ? `${minutes / 60}시간` : `${minutes}분`);

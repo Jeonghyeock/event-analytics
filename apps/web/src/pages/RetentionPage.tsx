@@ -15,7 +15,12 @@ import { formatCount } from "../lib/series";
 import styles from "./ReportsPage.module.css";
 
 // 리텐션 화면(DESIGN 6.5, 6.7): 날마다 무리 × N일째 표 하나(그래프 없음, 10장 49).
-type RetentionForm = z.input<typeof RetentionQuery>;
+export type RetentionForm = z.input<typeof RetentionQuery>;
+
+export function defaultRetentionForm(now = new Date()): RetentionForm {
+  const timezone = "Asia/Seoul";
+  return { days: 7, filters: [], timezone, ...lastDays(timezone, 7, now) };
+}
 
 export function RetentionPage() {
   const [query, setQuery] = useState<RetentionQuery | null>(null);
@@ -30,10 +35,11 @@ export function RetentionPage() {
     queryFn: async () => ({ query: query!, result: await runRetention(query!) }),
     placeholderData: keepPreviousData,
   });
+  const [initial] = useState(defaultRetentionForm);
   return (
     <>
       <h1>리텐션</h1>
-      <RetentionFormView onSubmit={submit} />
+      <RetentionFormView initial={initial} onSubmit={submit} />
       <section className={styles.result} aria-label="결과" aria-busy={retention.isFetching}>
         {query === null ? (
           <p className={styles.muted}>무리의 기간을 고르고 "보기"를 누르세요.</p>
@@ -51,12 +57,13 @@ export function RetentionPage() {
   );
 }
 
-function RetentionFormView({ onSubmit }: { onSubmit: (q: RetentionQuery) => void }) {
+function RetentionFormView({ initial, onSubmit }: { initial: RetentionForm; onSubmit: (q: RetentionQuery) => void }) {
   const id = useId();
-  const [form, setForm] = useState<RetentionForm>(() => ({ days: 7, filters: [], timezone: "Asia/Seoul", ...lastDays("Asia/Seoul", 7) }));
+  const [form, setForm] = useState<RetentionForm>(initial);
   const [errors, setErrors] = useState<string[]>([]);
   const set = (patch: Partial<RetentionForm>) => setForm((f) => ({ ...f, ...patch }));
   const range = { from: form.from, to: form.to, timezone: form.timezone ?? ("Asia/Seoul" as const) };
+  const days = form.days ?? 7;
   return (
     <form
       className={formStyles.form}
@@ -77,7 +84,9 @@ function RetentionFormView({ onSubmit }: { onSubmit: (q: RetentionQuery) => void
         <EventSelect label="시작 이벤트" optional value={form.startEvent ?? ""} range={range} onChange={(v) => set({ startEvent: v || undefined })} />
         <EventSelect label="돌아옴 이벤트" optional value={form.returnEvent ?? ""} range={range} onChange={(v) => set({ returnEvent: v || undefined })} />
         <label htmlFor={`${id}-days`}>며칠째까지</label>
-        <select id={`${id}-days`} value={form.days} onChange={(e) => set({ days: Number(e.target.value) })}>
+        <select id={`${id}-days`} value={days} onChange={(e) => set({ days: Number(e.target.value) })}>
+          {/* 저장한 설정의 값이 고를 것에 없어도 보이는 값과 보내는 값이 같게 */}
+          {!DAYS_PRESETS.some((d) => d === days) && <option value={days}>{days}일째</option>}
           {DAYS_PRESETS.map((d) => (
             <option key={d} value={d}>
               {d}일째
@@ -107,23 +116,39 @@ function RetentionFormView({ onSubmit }: { onSubmit: (q: RetentionQuery) => void
   );
 }
 
-// 비율은 한 색의 농도로도 보인다(순차 색, 값이 클수록 짙게). 글자는 늘 글자 색이고 정확한 수는 칸의 제목에 있다.
-const shade = (rate: number) => ({ background: `color-mix(in srgb, var(--series-1) ${Math.round(rate * 40)}%, transparent)` });
+// 비율은 한 색의 농도로도 보인다(순차 색, 값이 클수록 짙게). 표의 가장 큰 비율이 가장 짙다(40%까지): 리텐션은 대개 몇 %~몇십 %라
+// 비율 그대로면 거의 보이지 않는다(코드 리뷰). 글자는 늘 글자 색이다(40% 위에서도 대비 8.8:1 이상).
+const shade = (rate: number, max: number) => ({ background: `color-mix(in srgb, var(--series-1) ${Math.round((rate / max) * 40)}%, transparent)` });
 
 function RetentionTable({ result }: { result: RetentionResult }) {
   const rows = retentionRows(result);
   const days = result.meta.days;
-  return (
+  const max = Math.max(0, ...rows.flatMap((r) => r.cells.map((c) => c.rate ?? 0)));
+  const header = (
     <>
       <p className={styles.explain}>
-        <strong>날마다 무리</strong>: 그날 시작 이벤트가 있는 사용자 전부가 그날의 무리입니다. 한 사람이 여러 무리에 들어 무리끼리 더할 수 없습니다. N일째는 무리의 날 + N일에 돌아옴
-        이벤트가 있는 비율입니다.
+        <strong>날마다 무리</strong>: 그날 시작 이벤트가 있는 사용자 전부가 그날의 무리입니다. 한 사람이 여러 무리에 들어 무리끼리 더할 수 없습니다. N일째는 무리의 날 + N일 그날에 돌아옴
+        이벤트가 있는 비율입니다(그날만 셉니다, N일 안의 누적이 아닙니다).
       </p>
       <ul className={styles.badges}>
         <li>빈칸: 아직 지나지 않은 날</li>
         <li>—: 무리가 0명</li>
-        {result.meta.provisional && <li>최근 7일이 들어 있어 늦은 이벤트가 더 올 수 있음</li>}
+        {/* provisional은 마지막 칸의 날(to + N일) 기준이다(고른 기간이 아니라) */}
+        {result.meta.provisional && <li>N일째까지 읽는 날이 최근 7일에 걸쳐 늦은 이벤트가 더 올 수 있음</li>}
       </ul>
+    </>
+  );
+  if (!rows.some((r) => r.users > 0)) {
+    return (
+      <>
+        {header}
+        <p className={styles.muted}>이 기간에 무리가 없습니다(시작 이벤트가 있는 사용자가 없거나, 날이 아직 오지 않았습니다).</p>
+      </>
+    );
+  }
+  return (
+    <>
+      {header}
       <div className={tableStyles.wrap}>
         <table className={tableStyles.table}>
           <caption className="visually-hidden">무리의 날별 N일째 돌아온 비율</caption>
@@ -131,7 +156,7 @@ function RetentionTable({ result }: { result: RetentionResult }) {
             <tr>
               <th scope="col">무리의 날</th>
               <th scope="col" className={tableStyles.number}>
-                무리
+                무리 크기
               </th>
               {Array.from({ length: days }, (_, i) => (
                 <th key={i} scope="col" className={tableStyles.number}>
@@ -153,9 +178,11 @@ function RetentionTable({ result }: { result: RetentionResult }) {
                     key={i}
                     className={tableStyles.number}
                     title={c.count === null ? "아직 지나지 않은 날" : `${formatCount(c.count)}명`}
-                    style={c.state === "known" ? shade(c.rate!) : undefined}
+                    style={c.state === "known" && max > 0 ? shade(c.rate!, max) : undefined}
                   >
                     {c.state === "pending" ? "" : formatRate(c.rate)}
+                    {/* 명 수는 제목(마우스)뿐 아니라 화면 읽기 프로그램에도 */}
+                    {c.state === "known" && <span className="visually-hidden">{` (${formatCount(c.count!)}명)`}</span>}
                   </td>
                 ))}
               </tr>

@@ -85,8 +85,9 @@ export function EventSelect({
   const id = useId();
   const names = useDimensionValues("event_name", range);
   const options = (names.data ?? []).flatMap((o) => (o.value === null ? [] : [o.value]));
-  // 고른 이름이 이 기간의 목록에 없어도(저장한 설정 등) 그대로 보인다
-  if (value && !options.includes(value)) options.unshift(value);
+  // 고른 이름이 이 기간의 목록에 없어도(저장한 설정 등) 그대로 보인다. 목록을 읽었는데 없으면 그 기간에는 0이 나온다고 알린다.
+  const missing = value !== "" && !options.includes(value);
+  if (missing) options.unshift(value);
   return (
     <span className={styles.field}>
       <label htmlFor={id}>{label}</label>
@@ -95,9 +96,12 @@ export function EventSelect({
         {options.map((name) => (
           <option key={name} value={name}>
             {name}
+            {missing && name === value && names.isSuccess ? " (이 기간에 없음)" : ""}
           </option>
         ))}
       </select>
+      {/* 목록을 못 읽으면(보관 기간 밖, API 꺼짐) 고를 것이 없는 까닭을 알린다(코드 리뷰) */}
+      {names.isError && <span className={styles.hint}>이벤트 목록을 읽지 못했습니다. 기간을 확인하세요.</span>}
     </span>
   );
 }

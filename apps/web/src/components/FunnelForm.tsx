@@ -1,8 +1,8 @@
 import { EVENT_DIMENSIONS, FunnelQuery, MAX_FUNNEL_STEPS } from "@event-analytics/shared";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { z } from "zod";
 import { DIMENSION_LABELS, lastDays } from "../lib/form";
-import { WINDOW_PRESETS } from "../lib/funnel";
+import { WINDOW_PRESETS, windowLabel } from "../lib/funnel";
 import { issueMessages } from "../lib/issues";
 import styles from "./Form.module.css";
 import { EventSelect, FilterList, RangeFields } from "./FormParts";
@@ -22,6 +22,15 @@ export function FunnelFormView({ initial, onSubmit }: { initial: FunnelForm; onS
   const set = (patch: Partial<FunnelForm>) => setForm((f) => ({ ...f, ...patch }));
   const range = { from: form.from, to: form.to, timezone: form.timezone ?? ("Asia/Seoul" as const) };
   const steps = form.steps;
+  const windowMinutes = form.windowMinutes ?? 60;
+  // 단계를 빼면 그 자리(마지막이면 앞) 단계로 포커스를 옮긴다(빼기 단추가 사라져 포커스가 body로 빠지지 않게)
+  const stepsRef = useRef<HTMLOListElement>(null);
+  const [focusStep, setFocusStep] = useState<number | null>(null);
+  useEffect(() => {
+    if (focusStep === null) return;
+    stepsRef.current?.querySelectorAll("select")[focusStep]?.focus();
+    setFocusStep(null);
+  }, [focusStep]);
 
   return (
     <form
@@ -44,13 +53,20 @@ export function FunnelFormView({ initial, onSubmit }: { initial: FunnelForm; onS
     >
       <RangeFields value={range} onChange={(r) => set(r)} />
 
-      <ol className={styles.steps} aria-label="단계">
+      {/* list-style이 없는 목록은 Safari가 목록으로 읽지 않아 role을 적는다 */}
+      <ol ref={stepsRef} className={styles.steps} aria-label="단계" role="list">
         {steps.map((step, i) => (
           // 단계는 차례가 뜻이라 자리(i)가 키다
           <li key={i} className={styles.row}>
             <EventSelect label={`${i + 1}단계`} value={step} range={range} onChange={(v) => set({ steps: steps.map((s, j) => (j === i ? v : s)) })} />
             {steps.length > 2 && (
-              <button type="button" onClick={() => set({ steps: steps.filter((_, j) => j !== i) })}>
+              <button
+                type="button"
+                onClick={() => {
+                  set({ steps: steps.filter((_, j) => j !== i) });
+                  setFocusStep(Math.min(i, steps.length - 2));
+                }}
+              >
                 {i + 1}단계 빼기
               </button>
             )}
@@ -64,7 +80,9 @@ export function FunnelFormView({ initial, onSubmit }: { initial: FunnelForm; onS
           </button>
         )}
         <label htmlFor={`${id}-window`}>전환 기간</label>
-        <select id={`${id}-window`} value={form.windowMinutes} onChange={(e) => set({ windowMinutes: Number(e.target.value) })}>
+        <select id={`${id}-window`} value={windowMinutes} onChange={(e) => set({ windowMinutes: Number(e.target.value) })}>
+          {/* 저장한 설정의 값이 고를 것에 없어도 보이는 값과 보내는 값이 같게 */}
+          {!WINDOW_PRESETS.some((p) => p.minutes === windowMinutes) && <option value={windowMinutes}>{windowLabel(windowMinutes)}</option>}
           {WINDOW_PRESETS.map((p) => (
             <option key={p.minutes} value={p.minutes}>
               {p.label}
