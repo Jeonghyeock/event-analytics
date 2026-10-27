@@ -9,9 +9,9 @@ import { runRetention } from "../reports/retention-run.js";
 import { buildRetentionSql } from "../reports/retention-sql.js";
 import { runReport } from "../reports/run.js";
 import { buildReportSql, type ReportSql } from "../reports/sql.js";
-import { applyPlannerSettings, inReportTransaction, type ReportKind } from "../reports/transaction.js";
+import { applyPlannerSettings, inReportTransaction, ReportFailed, type ReportKind } from "../reports/transaction.js";
 import { FUNNEL } from "./generate.js";
-import { MIX_TIMEZONE, reportMix, todayIn } from "./mix.js";
+import { MIX_TIMEZONE, outOfRetention, reportMix, todayIn } from "./mix.js";
 
 // 정한 리포트의 시간(DESIGN 6.3 "원본에서 세는 시간", 3·4·5·7단계 기록). API와 같은 길(runReport, runFunnel, runRetention)로 센다.
 // 리포트마다 첫 회차를 따로 두고, 그 뒤 n번의 가운데 값을 낸다. --explain이면 리포트마다 EXPLAIN (ANALYZE, BUFFERS, COSTS, TIMING)도
@@ -97,8 +97,12 @@ const measureRetention = async (body: unknown): Promise<Measured> => {
   const result = await runRetention(pool, q, options);
   return { source: "retention", watermark: null, rowCount: result.rows.length, sql: () => buildRetentionSql(q), kind: "retention" };
 };
-// S2 묶음(DESIGN 6.8): 7은 오늘(리포트 시간대)을 읽는다
-const mix = reportMix(todayIn(MIX_TIMEZONE));
+// S2 묶음(DESIGN 6.8): 7은 오늘(리포트 시간대)을 읽는다. --as-of를 주면 그 시각의 오늘이다.
+const now = asOf ? new Date(asOf) : new Date();
+const mix = reportMix(todayIn(MIX_TIMEZONE, now));
+if (kind === "mix" && outOfRetention(mix, now).length > 0) {
+  throw new Error(`묶음의 ${outOfRetention(mix, now).join(", ")}가 보관 기간 밖입니다. mix.ts의 날짜를 함께 옮기세요(DESIGN 6.8)`);
+}
 const MIX = Object.fromEntries(mix.map((k) => [`${k.key} ${k.name}`, { path: k.path, body: k.body }]));
 const byPath = { "/reports/query": measureReport, "/funnels/query": measureFunnel, "/retention/query": measureRetention };
 const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise<Measured>]> = {
@@ -113,38 +117,51 @@ const CASES: Record<string, [Record<string, unknown>, (body: unknown) => Promise
 
 const pool = createPool({ connectionString: url, max: 1, application_name: "event-analytics-report-bench" });
 const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
-const results = [];
+// 계획: EXPLAIN ANALYZE가 한도에 걸리면 ANALYZE 없는 계획(어림만)이라도 남긴다(가장 느린 것의 계획이 가장 필요하다, 코드 리뷰)
+const explain = (plannerKind: ReportKind, sql: () => ReportSql, analyze: boolean) =>
+  inReportTransaction(pool, { statementTimeout: "30s" }, async (client) => {
+    await applyPlannerSettings(client, plannerKind);
+    const { text, values: params } = sql();
+    const { rows } = await client.query(`explain (${analyze ? "analyze, buffers, timing, " : ""}costs) ${text}`, params);
+    return rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
+  });
+const results: Record<string, unknown>[] = [];
 try {
   if (!Object.hasOwn(CASES, kind)) throw new Error(`--kind는 ${Object.keys(CASES).join(", ")} 가운데 하나입니다`);
   const [bodies, measure] = CASES[kind]!;
   for (const [name, body] of Object.entries(bodies)) {
-    const times: number[] = [];
-    let last: Measured | undefined;
-    for (let i = 0; i <= runs; i++) {
-      const started = performance.now();
-      last = await measure(body);
-      times.push(performance.now() - started);
+    // 하나가 한도(30초)에 걸려도 나머지를 잰다. 걸린 것은 "한도 이상"으로 적는다.
+    try {
+      const times: number[] = [];
+      let last: Measured | undefined;
+      for (let i = 0; i <= runs; i++) {
+        const started = performance.now();
+        last = await measure(body);
+        times.push(performance.now() - started);
+      }
+      const [first, ...rest] = times;
+      const { source, watermark, rowCount, sql, kind: plannerKind } = last!;
+      let plan: string | undefined;
+      if (values.explain) {
+        plan = await explain(plannerKind, sql, true).catch(async (err: unknown) => {
+          if (!(err instanceof ReportFailed && err.code === "report_timeout")) throw err;
+          return `(EXPLAIN ANALYZE가 한도를 넘어 어림만)\n${await explain(plannerKind, sql, false)}`;
+        });
+      }
+      const r = { name, source, watermark, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
+      console.log(`${name}(${source}): 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
+      results.push(r);
+    } catch (err) {
+      const error = err instanceof ReportFailed && err.code === "report_timeout" ? "한도 이상(30초)" : err instanceof Error ? err.message : String(err);
+      console.log(`${name}: ${error}`);
+      results.push({ name, error });
     }
-    const [first, ...rest] = times;
-    const { source, watermark, rowCount, sql, kind: plannerKind } = last!;
-    let plan: string | undefined;
-    if (values.explain) {
-      plan = await inReportTransaction(pool, { statementTimeout: "30s" }, async (client) => {
-        await applyPlannerSettings(client, plannerKind);
-        const { text, values: params } = sql();
-        const { rows } = await client.query(`explain (analyze, buffers, costs, timing) ${text}`, params);
-        return rows.map((r: { "QUERY PLAN": string }) => r["QUERY PLAN"]).join("\n");
-      });
-    }
-    const r = { name, source, watermark, rowCount, firstMs: Math.round(first!), medianMs: Math.round(median(rest)), runsMs: rest.map(Math.round), plan };
-    console.log(`${name}(${source}): 행 ${rowCount}, 첫 ${r.firstMs}ms, 가운데 ${r.medianMs}ms (${r.runsMs.join(", ")})`);
-    results.push(r);
   }
 } finally {
   await pool.end();
+  const dir = fileURLToPath(new URL("../../../../load/results/", import.meta.url));
+  mkdirSync(dir, { recursive: true });
+  const file = `${dir}${kind === "reports" ? "report" : kind}-bench-${new Date().toISOString().replaceAll(":", "-")}.json`;
+  writeFileSync(file, JSON.stringify({ kind, runs, asOf, forceRaw, database: new URL(url).pathname.slice(1), results }, null, 2));
+  console.log(`결과: ${file}`);
 }
-const dir = fileURLToPath(new URL("../../../../load/results/", import.meta.url));
-mkdirSync(dir, { recursive: true });
-const file = `${dir}${kind === "reports" ? "report" : kind}-bench-${new Date().toISOString().replaceAll(":", "-")}.json`;
-writeFileSync(file, JSON.stringify({ kind, runs, asOf, forceRaw, database: new URL(url).pathname.slice(1), results }, null, 2));
-console.log(`결과: ${file}`);

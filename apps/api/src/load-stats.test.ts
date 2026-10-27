@@ -97,6 +97,8 @@ describe("부하 측정 지표(LOAD_STATS)", () => {
   it("줄을 서서 받은 연결의 대기는 기다린 요청에 붙는다(연결을 놓은 요청이 아니라)", async () => {
     // 리포트 풀(2개)을 A·B가 400ms 쥐고, C는 둘 가운데 하나가 놓을 때까지 기다린다. pg-pool은 놓는 쪽의 맥락에서 C의 콜백을 부른다.
     const hold = (url: string) => app.inject(url);
+    // 연결 둘을 미리 맺어 둔다(A·B가 새 연결을 맺느라 기다린 시간이 대기로 잡히지 않게, 코드 리뷰)
+    await Promise.all([reportPool.query("select pg_sleep(0.05)"), reportPool.query("select pg_sleep(0.05)")]);
     const a = hold("/test/hold?ms=400");
     const b = hold("/test/hold?ms=400");
     await new Promise((r) => setTimeout(r, 50));
