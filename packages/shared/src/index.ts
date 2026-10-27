@@ -102,3 +102,74 @@ export const IngestUnavailable = z.object({
   error: z.string(),
   code: z.enum(["partition_missing", "busy"]),
 });
+
+// ── 리포트(DESIGN 6.3) ──
+
+export const METRICS = ["events", "users"] as const;
+export const DIMENSIONS = ["event_name", "platform", "country", "channel", "campaign"] as const;
+export const GRANULARITIES = ["hour", "day", "week", "total"] as const;
+// 일광 절약 시간이 있는 곳(America/*, Europe/London)과 30분 단위 오프셋(Asia/Kolkata)이 들어 있다.
+export const TIMEZONES = [
+  "UTC",
+  "Asia/Seoul",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Asia/Kolkata",
+  "Europe/London",
+  "America/New_York",
+  "America/Los_Angeles",
+] as const;
+export const MAX_REPORT_DAYS = 92;
+export const MAX_REPORT_ROWS = 5_000;
+export type Metric = (typeof METRICS)[number];
+export type Dimension = (typeof DIMENSIONS)[number];
+
+const distinct = <T>(items: T[]) => new Set(items).size === items.length;
+const daysBetween = (from: string, to: string) => (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+
+// 리포트 설정. 모든 이름은 허용 목록이고 모르는 필드는 거절한다. SQL에는 코드의 상수 식별자와 매개변수만 들어간다(10장 31~32).
+export const ReportQuery = z
+  .strictObject({
+    metrics: z.array(z.enum(METRICS)).min(1).max(2).refine(distinct, "지표가 겹칩니다"),
+    dimensions: z.array(z.enum(DIMENSIONS)).max(2).refine(distinct, "차원이 겹칩니다").default([]),
+    // 값 목록 안에 있으면 남긴다(IN). 여러 필터는 모두 맞아야 한다(AND). 값이 없는 차원(null)은 고를 수 없다.
+    filters: z
+      .array(z.strictObject({ dimension: z.enum(DIMENSIONS), values: z.array(Text(128)).min(1).max(100) }))
+      .max(DIMENSIONS.length)
+      .refine((filters) => distinct(filters.map((f) => f.dimension)), "같은 차원의 필터가 둘입니다")
+      .default([]),
+    // 리포트 시간대의 날짜, 둘 다 포함
+    from: z.iso.date(),
+    to: z.iso.date(),
+    granularity: z.enum(GRANULARITIES),
+    timezone: z.enum(TIMEZONES).default("Asia/Seoul"),
+  })
+  .refine((q) => q.from <= q.to, { message: "from이 to보다 늦습니다", path: ["from"] })
+  .refine((q) => daysBetween(q.from, q.to) < MAX_REPORT_DAYS, { message: `기간은 ${MAX_REPORT_DAYS}일까지입니다`, path: ["to"] });
+export type ReportQuery = z.infer<typeof ReportQuery>;
+
+// 행에는 요청한 지표만 있다. bucket은 묶음의 시작 순간(UTC ISO), label은 리포트 시간대의 벽시계 글자다.
+// 일광 절약 시간이 끝나는 날에는 같은 label이 둘일 수 있다(bucket이 다르다).
+export const ReportRow = z.object({
+  bucket: z.string(),
+  label: z.string(),
+  dimensions: z.record(z.string(), z.string().nullable()),
+  events: z.number().int().optional(),
+  users: z.number().int().optional(),
+});
+export type ReportRow = z.infer<typeof ReportRow>;
+
+export const ReportResult = z.object({
+  rows: z.array(ReportRow),
+  meta: z.object({
+    timezone: z.enum(TIMEZONES),
+    // 기간을 리포트 시간대로 바꾼 순간(UTC ISO): from 이상, to 미만
+    from: z.string(),
+    to: z.string(),
+    rowCount: z.number().int(),
+    source: z.literal("raw"),
+  }),
+});
+export type ReportResult = z.infer<typeof ReportResult>;
+
+export const ReportFailure = z.object({ error: z.string(), code: z.enum(["too_many_rows", "report_timeout"]) });
