@@ -5,3 +5,5 @@ coverage/
 .env.*
 !.env.example
 load/results/
+test-results/
+playwright-report/

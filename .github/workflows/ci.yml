@@ -41,11 +41,14 @@ jobs:
             --exclude-dir=node_modules --exclude-dir=dist "$1" apps packages | sort; }
           found="$(src DATABASE_OWNER_URL)"
           expected="$(printf '%s\n' \
+            apps/api/src/db/e2e-prepare-cli.ts \
             apps/api/src/db/maintain-cli.ts \
             apps/api/src/db/migrate-cli.ts \
+            apps/api/src/e2e-serve-cli.ts \
             apps/api/src/load/detach-rehearsal-cli.ts \
             apps/api/src/load/generate-cli.ts \
-            apps/api/test/global-setup.ts)"
+            apps/api/test/global-setup.ts \
+            apps/web/playwright.config.ts)"
           test "$found" = "$expected" || { echo "$found"; exit 1; }
           # 테스트는 앱 role로 돈다. 소유자 주소를 받는 테스트도 정해 둔다.
           found="$(src ownerDatabaseUrl)"
@@ -75,3 +78,50 @@ jobs:
           echo "DATABASE_OWNER_URL=postgres://event_analytics:$OWNER_PASSWORD@localhost:5432/event_analytics" >> "$GITHUB_ENV"
       - run: npm run db:migrate -w @event-analytics/api
       - run: npm test
+
+  # 화면에서 설정한 수가 고정 데이터와 같은지(DESIGN 6.7 E2E, 10장 55). DB event_analytics_e2e는 준비(e2e:prepare)가 소유자로 지우고 만든다.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps --only-shell chromium
+      # test 작업과 같은 role 둘. DB는 준비가 만들므로(소유자에게 CREATEDB) 여기서는 만들지 않는다.
+      # 주소의 DB 이름은 playwright.config.ts가 event_analytics_e2e로 바꾼다.
+      - name: role 만들기
+        run: |
+          OWNER_PASSWORD="$(openssl rand -hex 16)"
+          APP_PASSWORD="$(openssl rand -hex 16)"
+          echo "::add-mask::$OWNER_PASSWORD"
+          echo "::add-mask::$APP_PASSWORD"
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE event_analytics LOGIN CREATEDB PASSWORD '$OWNER_PASSWORD'" \
+            -c "CREATE ROLE event_analytics_app LOGIN PASSWORD '$APP_PASSWORD'" \
+            -c "GRANT event_analytics_app TO event_analytics"
+          echo "DATABASE_URL=postgres://event_analytics_app:$APP_PASSWORD@localhost:5432/event_analytics" >> "$GITHUB_ENV"
+          echo "DATABASE_OWNER_URL=postgres://event_analytics:$OWNER_PASSWORD@localhost:5432/event_analytics" >> "$GITHUB_ENV"
+      - run: npm run test:e2e -w @event-analytics/web
+      - name: 실패하면 trace를 남긴다
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: apps/web/test-results/
+          retention-days: 7
