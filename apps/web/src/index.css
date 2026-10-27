@@ -14,6 +14,16 @@
   --color-success: #1f7a3f;
   --color-warning: #9a6400;
 
+  /* 그래프(DESIGN 6.7): 계열 색은 검증한 팔레트의 앞 다섯 칸을 이 차례로 쓴다(표면 #ffffff에서 색각 이상 ΔE ≥ 9.1).
+     셋은 표면 대비 3:1 미만이라 범례와 표가 늘 함께 있다. "기타"는 회색이다. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-other: #9a9a94;
+  --color-chart-grid: #e6e8ec;
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
@@ -46,6 +56,15 @@
     --color-danger: #ff7a6e;
     --color-success: #5fcf8a;
     --color-warning: #f0b44a;
+
+    /* 어두운 표면(#1a1d21)에 맞춘 같은 다섯 색(색각 이상 ΔE ≥ 8.4, 모두 3:1 이상) */
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-other: #6f7178;
+    --color-chart-grid: #2c3036;
   }
 }
 
