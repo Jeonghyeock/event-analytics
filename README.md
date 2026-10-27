@@ -28,7 +28,7 @@ CREATE ROLE event_analytics_app LOGIN PASSWORD '다른 비밀번호';
 GRANT event_analytics_app TO event_analytics;
 ```
 
-`.env.example`을 `.env`로 복사하고 `DATABASE_URL`(앱)과 `DATABASE_OWNER_URL`(소유자)의 비밀번호를 채운 뒤 실행한다.
+`.env.example`을 `.env`로 복사하고 `DATABASE_URL`(앱)과 `DATABASE_OWNER_URL`(소유자)의 비밀번호, 수집 쓰기 키 `INGEST_WRITE_KEY`(32자 이상의 무작위 글자)를 채운 뒤 실행한다.
 
 ```sh
 npm ci
@@ -43,3 +43,4 @@ npm run dev                                  # API: http://127.0.0.1:3002
 | 경로 | 내용 |
 |---|---|
 | `GET /health` | DB에 닿으면 200, 아니면 503 |
+| `POST /ingest` | 이벤트 1~1,000건(헤더 `X-Write-Key`). 한 건씩 판단해 틀린 것과 받을 기간(과거 7일~미래 1시간) 밖은 이유와 함께 거절하고, 나머지는 `(event_id, occurred_at)`로 한 번만 저장한다. 응답은 받은 수·새로 넣은 수·중복 수·거절 목록이다. 파티션이 없거나 DB가 바쁘면 503(같은 배치를 다시 보내면 된다) |
