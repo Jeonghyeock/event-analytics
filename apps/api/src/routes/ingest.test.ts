@@ -63,11 +63,13 @@ async function waitUntil(check: () => Promise<boolean>) {
   throw new Error("기다리던 상태가 되지 않았습니다");
 }
 // 수집 문장이 다른 트랜잭션의 같은 키를 기다리는 중인지. 기다리는 쪽의 트랜잭션 밖에서(따로 접속해) 본다.
+// 키를 기다리면 상대 트랜잭션 id(transactionid)를 기다린다. 표 잠금(relation)을 기다리는 것은 다른 이유라 세지 않는다.
 const ingestWaitingOnLock = async () =>
   (
     await watcher.query(
       `select 1 from pg_stat_activity
-        where datname = current_database() and wait_event_type = 'Lock' and query like '%insert into events%unnest%'`,
+        where datname = current_database() and wait_event_type = 'Lock' and wait_event = 'transactionid'
+          and query like '%insert into events%unnest%'`,
     )
   ).rows.length === 1;
 
@@ -140,7 +142,9 @@ describe("A1 — 한 번만 저장", () => {
       );
       const started = Date.now();
       const res = await send([other, e]);
+      // 잠금 대기 한도(3초)에 닿았다. 문장 한도(5초)였다면 5초 뒤에 끝난다
       expect(Date.now() - started).toBeGreaterThanOrEqual(2_900);
+      expect(Date.now() - started).toBeLessThan(4_500);
       expect(res).toEqual({ status: 503, body: { error: expect.any(String), code: "busy" } });
     } finally {
       await holder.query("rollback");
@@ -263,13 +267,16 @@ describe("A2 — 받을 기간 밖과 틀린 이벤트는 이유와 함께 거�
     expect(await stored(pool, [e.eventId])).toBe(1);
   });
 
-  it("오프셋이 ±14:00을 넘으면 그 이벤트만 거절한다(PostgreSQL이 거절해 배치 전체가 실패하지 않게)", async () => {
+  // 재귀로 검사하면 스택이 넘쳐 배치 전체가 500이 된다(DESIGN 6.1).
+  it("수천 단계로 중첩된 properties는 그 이벤트만 거절한다", async () => {
+    // 이렇게 깊으면 JSON.stringify도 스택이 넘쳐 본문 글자를 직접 만든다
+    const deep = `{"deep":${"[".repeat(5_000)}1${"]".repeat(5_000)}}`;
     const good = event();
-    const at = Date.now() - MINUTE;
-    const plus16 = new Date(at + 16 * 60 * MINUTE).toISOString().replace("Z", "+16:00");
-    const { status, body } = await send([event({ occurredAt: plus16 }), good]);
+    const payload = JSON.stringify({ events: [event({ properties: "DEEP" }), good] }).split("\"DEEP\"").join(deep);
+    const { status, body } = await post(app, payload);
     expect(status).toBe(200);
-    expect(body).toMatchObject({ inserted: 1, rejected: [{ index: 0, reason: "invalid" }] });
+    expect(body).toMatchObject({ inserted: 1, rejected: [{ index: 0, reason: "invalid", message: expect.stringMatching(/^properties: /) }] });
+    expect(await stored(pool, [good.eventId])).toBe(1);
   });
 });
 
@@ -323,7 +330,7 @@ describe("봉투와 쓰기 키", () => {
     expect(await stored(pool, [e.eventId])).toBe(0);
   });
 
-  it("키가 틀리면 본문이 틀려도 400이 아니라 401이다(본문을 읽기 전에 본다)", async () => {
+  it("키가 없으면 본문이 틀려도 400이 아니라 401이다(본문을 읽기 전에 본다)", async () => {
     expect((await post(app, "{not json", null)).status).toBe(401);
   });
 
@@ -340,9 +347,12 @@ describe("봉투와 쓰기 키", () => {
     expect(res).toEqual({ error: expect.any(String) });
   });
 
-  it("본문이 6MiB를 넘으면 413이다", async () => {
-    const big = "x".repeat(6 * 1024 * 1024);
-    expect((await post(app, { events: [event({ properties: { big } })] })).status).toBe(413);
+  it("본문은 6MiB까지 받고, 1바이트라도 넘으면 413이다", async () => {
+    // JSON 뒤의 공백은 본문 크기에만 들어간다
+    const json = JSON.stringify({ events: [event()] });
+    const exactly = json + " ".repeat(6 * 1024 * 1024 - json.length);
+    expect((await post(app, exactly)).status).toBe(200);
+    expect((await post(app, `${exactly} `)).status).toBe(413);
   });
 
   it("보통의 글자로 필드를 꽉 채운 1,000건은 한도 안에 들어가 모두 저장된다", { timeout: 30_000 }, async () => {
