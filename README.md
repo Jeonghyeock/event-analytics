@@ -2,7 +2,7 @@
 
 마케터가 앱·웹의 행동 이벤트를 어떻게 볼지 설정해 그래프와 표로 보는 리포트 대시보드의 뒷단. 이벤트를 재전송에도 한 번만 저장하고, 리포트 설정(지표 × 차원 × 필터 × 기간 × 단위)을 안전한 SQL로 바꾸고, 수천만 건에서도 파티션과 시간 집계로 빠르게 답한다. PostgreSQL을 많은 데이터에서 운영하는 것이 목적이다.
 
-> 0단계(뼈대) 진행 중. 설계: [docs/DESIGN.md](docs/DESIGN.md)
+> 0단계(뼈대: 소유자·앱 role, seat-booking의 마이그레이션 실행기, 정렬을 OS에 맡기지 않는 DB) 완료. 다음은 1단계(수집). 설계: [docs/DESIGN.md](docs/DESIGN.md) · 진행 기록: [docs/PROGRESS.md](docs/PROGRESS.md)
 
 > Claude Code와 함께 만든다.
 
