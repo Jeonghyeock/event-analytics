@@ -5,7 +5,7 @@ import { withDatabase } from "./databases.js";
 import { addDays, createDailyPartitions, partitionName, utcDay } from "./partitions.js";
 import { createPool } from "./pool.js";
 
-// 이벤트 표와 일 파티션(DESIGN 5장, 6.1, 6.2). 테스트 DB는 다른 파일과 함께 쓰므로 모두 트랜잭션 안에서 하고 되돌린다.
+// 이벤트 표와 일 파티션(DESIGN 5장, 6.1, 6.2). 테스트 DB는 다른 파일과 함께 쓰므로 행은 트랜잭션 안에서 넣고 되돌린다.
 // 파티션을 만드는 시험은 부모 표를 통째로 잠근다. 수집 테스트가 잠금 대기를 지켜보는 DB와 겹치지 않게 isolated DB에서 한다.
 const isolatedDb = new URL(inject("isolatedDatabaseUrl")).pathname.slice(1);
 const owner = new pg.Pool({

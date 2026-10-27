@@ -46,7 +46,7 @@ export async function listPartitions(client: pg.ClientBase) {
   const { rows } = await client.query<{ name: string; pending: boolean }>(
     `select c.relname as name, i.inhdetachpending as pending
        from pg_inherits i join pg_class c on c.oid = i.inhrelid
-      where i.inhparent = 'events'::regclass
+      where i.inhparent = 'public.events'::regclass and c.relnamespace = 'public'::regnamespace
       order by 1`,
   );
   return rows.flatMap((r) => {
@@ -67,32 +67,50 @@ export async function createDailyPartitions(
   client: pg.ClientBase,
   from: string,
   to: string,
-  { retryDelaysMs = RETRY_DELAYS_MS }: Options = {},
+  options: Options = {},
 ): Promise<string[]> {
+  const { created, errors } = await attachDays(client, from, to, options);
+  if (errors.length > 0) throw new Error(`파티션을 만들지 못했습니다: ${errors.join("; ")}`);
+  return created;
+}
+
+// 하루가 실패해도(붙지 않은 표에 경계 밖 행이 있는 등) 다음 날을 계속 만든다. 하나의 실패가 오늘의 파티션까지 막지 않게.
+async function attachDays(client: pg.ClientBase, from: string, to: string, { retryDelaysMs = RETRY_DELAYS_MS }: Options) {
   checkDay(from, to);
+  outsideTransaction(client);
   const existing = new Set((await listPartitions(client)).map((p) => p.name));
   const loose = new Set(await looseTables(client));
   const created: string[] = [];
+  const errors: string[] = [];
   for (let day = from; day <= to; day = addDays(day, 1)) {
     const name = partitionName(day);
     if (existing.has(name)) continue;
-    await withLockRetry(async () => {
-      await client.query("begin");
-      try {
-        await client.query(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
-        if (!loose.has(name)) await client.query(`CREATE TABLE ${name} (LIKE events INCLUDING ALL)`);
-        await client.query(
-          `ALTER TABLE events ATTACH PARTITION ${name} FOR VALUES FROM ('${day} 00:00+00') TO ('${addDays(day, 1)} 00:00+00')`,
-        );
-        await client.query("commit");
-      } catch (err) {
-        await client.query("rollback").catch(() => {});
-        throw err;
-      }
-    }, retryDelaysMs);
-    created.push(name);
+    try {
+      await withLockRetry(async () => {
+        await client.query("begin");
+        try {
+          await client.query(`set local lock_timeout = '${LOCK_TIMEOUT}'`);
+          if (!loose.has(name)) await client.query(`CREATE TABLE public.${name} (LIKE public.events INCLUDING ALL)`);
+          await client.query(
+            `ALTER TABLE public.events ATTACH PARTITION public.${name} FOR VALUES FROM ('${day} 00:00+00') TO ('${addDays(day, 1)} 00:00+00')`,
+          );
+          await client.query("commit");
+        } catch (err) {
+          await client.query("rollback").catch(() => {});
+          throw err;
+        }
+      }, retryDelaysMs);
+      created.push(name);
+    } catch (err) {
+      errors.push(`${name}: ${(err as Error).message}`);
+    }
   }
-  return created;
+  return { created, errors };
+}
+
+// 이 모듈의 함수는 트랜잭션을 스스로 연다. 부른 쪽이 트랜잭션 안이면 BEGIN이 경고만 내고, 우리 COMMIT이 그 트랜잭션을 끝내 버린다.
+function outsideTransaction(client: pg.ClientBase) {
+  if (client.getTransactionStatus() !== "I") throw new Error("파티션 관리는 트랜잭션 밖의 연결로 부릅니다");
 }
 
 // 이름이 events_pYYYYMMDD인데 events에 붙어 있지 않은 표(뗐지만 지우지 못한 것 등).
@@ -116,7 +134,7 @@ export async function missingPartitionDays(client: pg.ClientBase | pg.Pool, from
   checkDay(from, to);
   const { rows } = await client.query<{ name: string }>(
     `select c.relname as name from pg_inherits i join pg_class c on c.oid = i.inhrelid
-      where i.inhparent = 'events'::regclass and not i.inhdetachpending`,
+      where i.inhparent = 'public.events'::regclass and c.relnamespace = 'public'::regnamespace and not i.inhdetachpending`,
   );
   const attached = new Set(rows.map((r) => r.name));
   const missing: string[] = [];
@@ -139,6 +157,7 @@ export async function maintain(
   client: pg.ClientBase,
   { today, retryDelaysMs = RETRY_DELAYS_MS, detachTimeout = DETACH_TIMEOUT }: Options & { today?: string; detachTimeout?: string } = {},
 ): Promise<MaintainResult> {
+  outsideTransaction(client);
   const result: MaintainResult = { created: [], finalized: [], dropped: [], errors: [] };
   const locked = (await client.query<{ ok: boolean }>("select pg_try_advisory_lock($1) as ok", [MAINTAIN_LOCK])).rows[0]!.ok;
   if (!locked) throw new Error("다른 관리 작업이 돌고 있습니다");
@@ -155,17 +174,23 @@ export async function maintain(
     const oldest = addDays(day, -RETENTION_DAYS);
     await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'`);
 
-    await step("만들기", async () => {
-      result.created = await createDailyPartitions(client, addDays(day, -BEHIND_DAYS), addDays(day, AHEAD_DAYS), { retryDelaysMs });
-    });
+    // 하루마다 실패를 모은다. 만든 것은 실패가 있어도 결과에 남는다.
+    const create = async () => {
+      const { created, errors } = await attachDays(client, addDays(day, -BEHIND_DAYS), addDays(day, AHEAD_DAYS), { retryDelaysMs });
+      result.created.push(...created);
+      result.errors.push(...errors.map((e) => `만들기: ${e}`));
+    };
+    await step("만들기", create);
 
     // FINALIZE는 DB의 더 오래된 스냅샷이 모두 끝나길 기다린다. 잠금 대기 1초로 묶어, 기다리는 동안 부모를 쥐어 다른 일을 막지 않게 한다.
     await step("마무리", async () => {
       for (const p of (await listPartitions(client)).filter((p) => p.pending)) {
-        await withLockRetry(() => client.query(`ALTER TABLE events DETACH PARTITION ${p.name} FINALIZE`), retryDelaysMs);
+        await withLockRetry(() => client.query(`ALTER TABLE public.events DETACH PARTITION public.${p.name} FINALIZE`), retryDelaysMs);
         result.finalized.push(p.name);
       }
     });
+    // 만들 범위 안의 파티션을 마무리했으면 그 날이 비었다(떼던 것이 끝났으므로). 바로 다시 붙인다.
+    if (result.finalized.length > 0) await step("만들기", create);
 
     await step("떼기", async () => {
       const partitions = await listPartitions(client);
@@ -175,11 +200,12 @@ export async function maintain(
         // 대신 문장 시간 한도를 둔다. 닿으면 떼는 중으로 남고 다음 실행이 마무리한다.
         await client.query(`set lock_timeout = 0; set statement_timeout = '${detachTimeout}'`);
         try {
-          await client.query(`ALTER TABLE events DETACH PARTITION ${p.name} CONCURRENTLY`);
+          await client.query(`ALTER TABLE public.events DETACH PARTITION public.${p.name} CONCURRENTLY`);
         } finally {
           await client.query(`set lock_timeout = '${LOCK_TIMEOUT}'; reset statement_timeout`).catch(() => {});
         }
-        await dropTable(client, p.name, retryDelaysMs, result);
+        // 지우기가 실패해도 다른 날은 계속 뗀다. 남은 표는 치우기 단계가 다시 지운다.
+        await dropTable(client, p.name, retryDelaysMs, result).catch((err: Error) => result.errors.push(`떼기: ${p.name} 지우기: ${err.message}`));
       }
     });
 
@@ -198,6 +224,6 @@ export async function maintain(
 
 // 뗀 표는 아무 쿼리도 보지 않으므로 지우기는 그 표만 잠근다.
 async function dropTable(client: pg.ClientBase, name: string, retryDelaysMs: number[], result: MaintainResult) {
-  await withLockRetry(() => client.query(`DROP TABLE ${name}`), retryDelaysMs);
+  await withLockRetry(() => client.query(`DROP TABLE public.${name}`), retryDelaysMs);
   result.dropped.push(name);
 }

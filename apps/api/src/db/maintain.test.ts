@@ -52,6 +52,21 @@ const detachWaiting = (watcher: pg.Client) => async () =>
     )
   ).rows.length === 1;
 
+// name을 떼다가 취소해 "떼는 중"으로 남긴다. 떼기가 기다리도록 그동안 부모를 읽은 트랜잭션을 열어 둔다.
+async function leavePending(db: { owner: string; app: string }, name: string) {
+  const reader = await connect(db.app);
+  const watcher = await connect(db.owner);
+  const detacher = await connect(db.owner);
+  await reader.query("begin");
+  await reader.query("select count(*) from events");
+  const pid = (await detacher.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]!.pid;
+  const detaching = detacher.query(`alter table events detach partition ${name} concurrently`).catch((e: unknown) => e);
+  await waitUntil(detachWaiting(watcher));
+  await watcher.query("select pg_cancel_backend($1)", [pid]);
+  expect(await detaching).toMatchObject({ code: "57014" });
+  await reader.query("commit");
+}
+
 describe("관리 작업", () => {
   it("오늘 ±7일 가운데 없는 날을 ATTACH로 만들고, 다시 돌리면 아무것도 하지 않는다", async () => {
     const db = await freshDatabase();
@@ -134,18 +149,7 @@ describe("관리 작업", () => {
     const owner = await connect(db.owner);
     await createDailyPartitions(owner, "2026-07-27", "2026-07-27", fast);
     await createDailyPartitions(owner, today, today, fast);
-    const reader = await connect(db.app);
-    const watcher = await connect(db.owner);
-    const detacher = await connect(db.owner);
-    await reader.query("begin");
-    await reader.query("select count(*) from events");
-
-    const pid = (await detacher.query<{ pid: number }>("select pg_backend_pid() as pid")).rows[0]!.pid;
-    const detaching = detacher.query("alter table events detach partition events_p20260727 concurrently").catch((e: unknown) => e);
-    await waitUntil(detachWaiting(watcher));
-    await watcher.query("select pg_cancel_backend($1)", [pid]);
-    expect(await detaching).toMatchObject({ code: "57014" });
-    await reader.query("commit");
+    await leavePending(db, "events_p20260727");
     expect((await listPartitions(owner)).find((p) => p.name === "events_p20260727")).toMatchObject({ pending: true });
 
     const result = await maintain(owner, { today, ...fast });
@@ -209,10 +213,44 @@ describe("관리 작업", () => {
     const owner = await connect(db.owner);
     await createDailyPartitions(owner, "2026-10-20", "2026-10-29", fast);
     await owner.query("drop table events_p20261025");
-    expect(await missingPartitionDays(owner, "2026-10-24", "2026-10-31")).toEqual(["2026-10-25", "2026-10-30", "2026-10-31"]);
+    await leavePending(db, "events_p20261026");
+    expect(await missingPartitionDays(owner, "2026-10-24", "2026-10-31")).toEqual(["2026-10-25", "2026-10-26", "2026-10-30", "2026-10-31"]);
     const app = new pg.Pool({ connectionString: db.app, max: 1 });
     onTestFinished(() => app.end());
     // 받을 기간(과거 7일)부터 앞으로 3일까지
-    expect(await missingSoon(app, today)).toEqual(["2026-10-25", "2026-10-30"]);
+    expect(await missingSoon(app, today)).toEqual(["2026-10-25", "2026-10-26", "2026-10-30"]);
+  });
+
+  it("하루가 실패해도 다른 날은 만들고(오늘 포함), 만든 것과 실패한 날을 함께 알린다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    // 붙지 않은 10월 22일 표에 그 날이 아닌 행이 있어 붙일 수 없다
+    await owner.query("create table events_p20261022 (like events including all)");
+    await owner.query(insertSql("2026-10-25").replace("into events", "into events_p20261022"));
+    const result = await maintain(owner, { today, ...fast });
+    expect(result.created).toHaveLength(14);
+    expect(result.created).toContain("events_p20261027");
+    expect(result.errors).toEqual([expect.stringMatching(/^만들기: events_p20261022: /)]);
+  });
+
+  it("만들 범위 안의 파티션이 떼는 중이었으면 마무리한 뒤 같은 실행에서 다시 붙인다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await createDailyPartitions(owner, "2026-10-28", "2026-10-28", fast);
+    await leavePending(db, "events_p20261028");
+    const result = await maintain(owner, { today, ...fast });
+    expect(result.finalized).toEqual(["events_p20261028"]);
+    expect(result.created).toContain("events_p20261028");
+    expect(result.errors).toEqual([]);
+    expect(await missingPartitionDays(owner, "2026-10-20", "2026-11-03")).toEqual([]);
+  });
+
+  it("부른 쪽이 트랜잭션 안이면 거절한다(우리 COMMIT이 그 트랜잭션을 끝내 버리므로)", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await owner.query("begin");
+    await expect(createDailyPartitions(owner, today, today, fast)).rejects.toThrow(/트랜잭션 밖/);
+    await expect(maintain(owner, { today, ...fast })).rejects.toThrow(/트랜잭션 밖/);
+    await owner.query("rollback");
   });
 });
