@@ -119,8 +119,10 @@ export const TIMEZONES = [
   "America/New_York",
   "America/Los_Angeles",
 ] as const;
-export const MAX_REPORT_DAYS = 92;
-export const MAX_REPORT_ROWS = 5_000;
+// 보관 기간(90일)과 같다. 기간의 시작이 보관 기간보다 앞서면 422 out_of_retention이다.
+export const MAX_REPORT_DAYS = 90;
+// 92일 시간별 × 플랫폼(6,624행), 30일 일별 × 캠페인(6,030행)이 들어간다. 넘으면 잘라 주지 않고 422다.
+export const MAX_REPORT_ROWS = 20_000;
 export type Metric = (typeof METRICS)[number];
 export type Dimension = (typeof DIMENSIONS)[number];
 
@@ -132,9 +134,9 @@ export const ReportQuery = z
   .strictObject({
     metrics: z.array(z.enum(METRICS)).min(1).max(2).refine(distinct, "지표가 겹칩니다"),
     dimensions: z.array(z.enum(DIMENSIONS)).max(2).refine(distinct, "차원이 겹칩니다").default([]),
-    // 값 목록 안에 있으면 남긴다(IN). 여러 필터는 모두 맞아야 한다(AND). 값이 없는 차원(null)은 고를 수 없다.
+    // 값 목록 안에 있으면 남긴다(IN). null을 넣으면 값이 없는 것도 남긴다. 여러 필터는 모두 맞아야 한다(AND).
     filters: z
-      .array(z.strictObject({ dimension: z.enum(DIMENSIONS), values: z.array(Text(128)).min(1).max(100) }))
+      .array(z.strictObject({ dimension: z.enum(DIMENSIONS), values: z.array(Text(128).nullable()).min(1).max(100) }))
       .max(DIMENSIONS.length)
       .refine((filters) => distinct(filters.map((f) => f.dimension)), "같은 차원의 필터가 둘입니다")
       .default([]),
@@ -148,8 +150,9 @@ export const ReportQuery = z
   .refine((q) => daysBetween(q.from, q.to) < MAX_REPORT_DAYS, { message: `기간은 ${MAX_REPORT_DAYS}일까지입니다`, path: ["to"] });
 export type ReportQuery = z.infer<typeof ReportQuery>;
 
-// 행에는 요청한 지표만 있다. bucket은 묶음의 시작 순간(UTC ISO), label은 리포트 시간대의 벽시계 글자다.
-// 일광 절약 시간이 끝나는 날에는 같은 label이 둘일 수 있다(bucket이 다르다).
+// 행에는 요청한 지표만 있다. bucket은 묶음의 시작 순간(UTC ISO), label은 리포트 시간대의 벽시계 글자다
+// (hour: YYYY-MM-DD HH:MM, day·week: YYYY-MM-DD, total: from ~ to). 일광 절약 시간이 끝나는 날에는 같은 label이 둘이다(bucket이 다르다).
+// users는 행끼리 더할 수 없다(같은 사람이 여러 묶음·차원 값에 나온다). 기간 전체의 사용자 수는 total, 차원 없이 묻는다.
 export const ReportRow = z.object({
   bucket: z.string(),
   label: z.string(),
@@ -158,6 +161,11 @@ export const ReportRow = z.object({
   users: z.number().int().optional(),
 });
 export type ReportRow = z.infer<typeof ReportRow>;
+
+// 기간의 모든 묶음(이벤트가 없는 것도). 화면은 이것으로 빈 묶음을 0으로 채운다.
+// utcOffset으로 일광 절약 시간이 끝나는 날의 두 01:00을 가리고, partial은 기간 끝에서 일부만 찬 묶음이다.
+export const ReportBucket = z.object({ bucket: z.string(), label: z.string(), utcOffset: z.string(), partial: z.boolean() });
+export type ReportBucket = z.infer<typeof ReportBucket>;
 
 export const ReportResult = z.object({
   rows: z.array(ReportRow),
@@ -168,8 +176,16 @@ export const ReportResult = z.object({
     to: z.string(),
     rowCount: z.number().int(),
     source: z.literal("raw"),
+    // 끝이 최근 7일 안이면 늦은 이벤트가 더 올 수 있다(받을 기간 7일)
+    provisional: z.boolean(),
+    buckets: z.array(ReportBucket),
   }),
 });
 export type ReportResult = z.infer<typeof ReportResult>;
 
-export const ReportFailure = z.object({ error: z.string(), code: z.enum(["too_many_rows", "report_timeout"]) });
+// 422: too_many_rows(묶음 × 차원 값이 너무 많음), out_of_retention(시작이 보관 기간보다 앞섬).
+// 503: report_timeout(문장 한도), busy(잠금 대기·교착·연결 대기).
+export const ReportFailure = z.object({
+  error: z.string(),
+  code: z.enum(["too_many_rows", "out_of_retention", "report_timeout", "busy"]),
+});
