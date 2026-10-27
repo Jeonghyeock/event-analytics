@@ -272,7 +272,8 @@ export const RetentionResult = z.object({
     z.object({
       cohort: z.string(),
       cohortStart: z.string(),
-      users: z.number().int(),
+      // 무리의 날이 아직 오지 않았으면 null
+      users: z.number().int().nullable(),
       returned: z.array(z.number().int().nullable()),
     }),
   ),
