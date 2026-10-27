@@ -51,6 +51,15 @@ describe("runReport", () => {
     await expect(runReport(query)).rejects.toBeInstanceOf(ContractError);
   });
 
+  it("프록시가 API에 닿지 못한 502(빈 본문)는 NetworkError다, JSON이 아닌 500은 문장 없는 ApiError다", async () => {
+    respond(502, undefined);
+    await expect(runReport(query)).rejects.toBeInstanceOf(NetworkError);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>oops</html>", { status: 500 })));
+    const err = await runReport(query).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 500, serverMessage: undefined });
+  });
+
   it("서버에 닿지 않으면 NetworkError다", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("fetch failed"))));
     await expect(runReport(query)).rejects.toBeInstanceOf(NetworkError);

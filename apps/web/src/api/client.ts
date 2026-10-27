@@ -29,7 +29,7 @@ export class ApiError extends Error {
   }
 }
 
-// 응답을 받지 못했다(서버가 꺼짐, 연결 끊김).
+// 응답을 받지 못했다(화면 서버가 꺼짐, 연결 끊김, 프록시가 API에 닿지 못함).
 export class NetworkError extends Error {
   override name = "NetworkError";
   constructor(
@@ -67,6 +67,8 @@ export async function apiRequest<S extends ZodType>(path: string, { method = "GE
   } catch (err) {
     throw new NetworkError(path, err);
   }
+  // API는 502를 보내지 않는다(4xx·500·503). 502는 Vite의 프록시가 API에 닿지 못한 것이라 "닿지 않음"으로 다룬다(다시 묻기·다시 하기).
+  if (res.status === 502) throw new NetworkError(path, new Error("프록시가 API에 닿지 못함(502)"));
   const json = await readJson(res);
   if (!res.ok) throw new ApiError(path, res.status, json);
   const parsed = schema.safeParse(json);
@@ -74,7 +76,7 @@ export async function apiRequest<S extends ZodType>(path: string, { method = "GE
   return parsed.data;
 }
 
-// 본문이 없거나 JSON이 아니면(프록시의 502 HTML 등) undefined다.
+// 본문이 없거나 JSON이 아니면 undefined다. 화면이 보이는 문장은 API의 JSON(error)에서만 온다(다른 본문은 사람에게 보이지 않는다).
 async function readJson(res: Response): Promise<unknown> {
   const text = await res.text();
   if (text === "") return undefined;
