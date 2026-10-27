@@ -82,7 +82,8 @@ jobs:
   # 화면에서 설정한 수가 고정 데이터와 같은지(DESIGN 6.7 E2E, 10장 55). DB event_analytics_e2e는 준비(e2e:prepare)가 소유자로 지우고 만든다.
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 보통 1분이지만, 브라우저가 쓰는 시스템 라이브러리(apt)를 받는 데 미러가 느리면 10분 넘게 걸린 적이 있다(40kB/s)
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18
