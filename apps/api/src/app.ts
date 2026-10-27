@@ -3,11 +3,18 @@ import { HealthResponse, HealthUnavailable } from "@event-analytics/shared";
 import Fastify, { type FastifyError, type FastifyServerOptions } from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import type pg from "pg";
+import type { ReportOptions } from "./reports/run.js";
 import { ingestRoutes } from "./routes/ingest.js";
+import { reportRoutes } from "./routes/reports.js";
 
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
 // ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
-export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}, services: { ingestWriteKey?: string } = {}) {
+// reports는 리포트의 한도(행 수, 시간)를 테스트가 바꿀 때만 넘긴다.
+export function buildApp(
+  pool: pg.Pool,
+  options: FastifyServerOptions = {},
+  services: { ingestWriteKey?: string; reports?: ReportOptions } = {},
+) {
   const app = Fastify(options).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -41,6 +48,7 @@ export function buildApp(pool: pg.Pool, options: FastifyServerOptions = {}, serv
   );
 
   app.register(ingestRoutes, { pool, writeKey: services.ingestWriteKey ?? randomBytes(32).toString("hex") });
+  app.register(reportRoutes, { pool, options: services.reports });
 
   return app;
 }
