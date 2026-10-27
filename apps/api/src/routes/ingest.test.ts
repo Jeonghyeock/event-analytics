@@ -370,3 +370,27 @@ describe("봉투와 쓰기 키", () => {
     expect(body.inserted).toBe(1_000);
   });
 });
+
+// 집계 표의 늦은 이벤트(DESIGN 6.4, 10장 38). 새로 들어간 이벤트의 UTC 시간마다 더러운 시간 행을 덧붙인다.
+describe("더러운 시간", () => {
+  const hourOf = (ms: number) => new Date(Math.floor(ms / 3_600_000) * 3_600_000).toISOString();
+  const dirtyRows = async (hour: string) =>
+    (await pool.query<{ n: number }>("select count(*)::int as n from dirty_hours where hour = $1", [hour])).rows[0]!.n;
+
+  it("새로 들어간 이벤트의 시간마다 행을 덧붙이고(배치마다 따로), 중복만 든 재전송은 덧붙이지 않는다", async () => {
+    // 다른 테스트와 겹치지 않을 시간: 5일 전의 정시 + 17분
+    const base = Math.floor((Date.now() - 5 * DAY) / 3_600_000) * 3_600_000 + 17 * MINUTE;
+    const h1 = hourOf(base);
+    const h2 = hourOf(base + 60 * MINUTE);
+    const before = [await dirtyRows(h1), await dirtyRows(h2)];
+    const batch = [event({ occurredAt: iso(base) }), event({ occurredAt: iso(base + MINUTE) }), event({ occurredAt: iso(base + 60 * MINUTE) })];
+    expect((await send(batch)).body).toMatchObject({ inserted: 3 });
+    // 한 배치 안의 같은 시간은 한 행
+    expect([await dirtyRows(h1), await dirtyRows(h2)]).toEqual([before[0]! + 1, before[1]! + 1]);
+    expect((await send([event({ occurredAt: iso(base + 2 * MINUTE) })])).body).toMatchObject({ inserted: 1 });
+    // 다른 배치는 같은 시간이어도 자기 행을 덧붙인다(유일 키가 없다)
+    expect(await dirtyRows(h1)).toBe(before[0]! + 2);
+    expect((await send(batch)).body).toMatchObject({ inserted: 0, duplicates: 3 });
+    expect(await dirtyRows(h1)).toBe(before[0]! + 2);
+  });
+});
