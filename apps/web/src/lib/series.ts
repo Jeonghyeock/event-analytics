@@ -203,10 +203,30 @@ export function axisLabels(buckets: readonly ChartBucket[], plotWidth: number): 
   let candidates = buckets.map((b, index) => ({ index, b })).filter(({ b }) => !b.label.includes("("));
   if (hourly && !sameDay) candidates = candidates.filter(({ b }) => b.label.endsWith(" 00:00"));
   if (candidates.length === 0) return [];
-  // 글자 하나 7px쯤 + 여백. 묶음 사이가 그보다 좁으면 건너뛴다.
-  const labelWidth = Math.max(...candidates.map(({ b }) => short(b.label).length)) * 7 + 16;
+  // 글자 너비 + 여백. 이웃한 후보 사이가 그보다 좁으면 건너뛴다. 사이는 가장 좁은 곳으로 잰다: 두 01:00을 뺀 날은 후보 사이가
+  // 고르지 않다(첫 두 후보만 재면 3배로 보아 겹친다, 코드 리뷰).
+  const labelWidth = Math.max(...candidates.map(({ b }) => textWidth(short(b.label), AXIS_FONT))) + 16;
   const gap = n === 1 ? plotWidth : plotWidth / (n - 1);
-  const spacing = candidates.length > 1 ? (candidates[1]!.index - candidates[0]!.index) * gap : plotWidth;
+  const minIndexGap = Math.min(...candidates.slice(1).map(({ index }, i) => index - candidates[i]!.index));
+  const spacing = candidates.length > 1 ? minIndexGap * gap : plotWidth;
   const step = Math.max(1, Math.ceil(labelWidth / spacing));
   return candidates.filter((_, i) => i % step === 0).map(({ index, b }) => ({ index, text: short(b.label) }));
+}
+
+// x축 글자 크기(Chart.module.css의 .xTick)
+export const AXIS_FONT = 12;
+
+// SVG 글자 너비 어림(px). 재지 않고 글자로 센다: 라틴 글자·숫자는 글자 크기의 0.6배쯤, 한글 등은 1배쯤(넉넉하게).
+export function textWidth(text: string, fontSize: number): number {
+  let em = 0;
+  for (const ch of text) em += ch.charCodeAt(0) < 0x80 ? 0.6 : 1;
+  return em * fontSize;
+}
+
+// 너비를 넘으면 말줄임표로 자른다
+export function clipText(text: string, maxWidth: number, fontSize: number): string {
+  if (textWidth(text, fontSize) <= maxWidth) return text;
+  const chars = [...text];
+  while (chars.length > 1 && textWidth(`${chars.join("")}…`, fontSize) > maxWidth) chars.pop();
+  return `${chars.join("")}…`;
 }

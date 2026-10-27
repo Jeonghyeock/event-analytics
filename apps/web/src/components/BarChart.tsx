@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { formatCount } from "../lib/series";
+import { clipText, formatCount, textWidth } from "../lib/series";
 import { useWidth } from "../lib/useWidth";
 import styles from "./Chart.module.css";
 
@@ -10,6 +10,8 @@ export type Bar = { key: string; label: string; value: number; color: string; no
 
 const BAR = 20;
 const GAP = 12;
+// 이름·값 글자 크기(Chart.module.css의 .barLabel, .barValue)
+const BAR_FONT = 13;
 
 // 끝만 둥근 막대: 왼쪽(기준선)은 각지고 오른쪽 위·아래 모서리만 4px
 function barPath(x: number, y: number, w: number, h: number) {
@@ -21,11 +23,13 @@ function barPath(x: number, y: number, w: number, h: number) {
 export function BarChart({ title, bars }: { title: string; bars: Bar[] }) {
   const ref = useRef<HTMLDivElement>(null);
   const W = useWidth(ref);
-  // 이름 칸과 값 칸은 너비의 3할까지(폰에서도 막대 자리가 남게). 이름이 칸보다 길면 말줄임을 하고 전체 이름은 막대의 제목(<title>)에 둔다.
+  // 이름 칸은 너비의 3할까지(폰에서도 막대 자리가 남게). 이름이 칸보다 길면 말줄임을 하고 전체 이름은 막대의 제목(<title>)에 둔다.
   const labelW = Math.min(180, Math.round(W * 0.3));
-  const valueW = Math.min(220, Math.round(W * 0.3));
-  const maxLabel = Math.max(4, Math.floor((labelW - 8) / 8));
-  const clip = (label: string) => (label.length > maxLabel ? `${label.slice(0, maxLabel - 1)}…` : label);
+  // 값 칸은 가장 긴 값 글자만큼(막대 끝 뒤 8px 포함), 너비의 4.5할까지. 덧붙임(note)까지 들어가지 않으면 값만 적는다(덧붙임은 제목과 표에 있다).
+  const valueText = (b: Bar, withNote: boolean) => `${formatCount(b.value)}${withNote && b.note ? ` · ${b.note}` : ""}`;
+  const widest = (withNote: boolean) => Math.max(0, ...bars.map((b) => textWidth(valueText(b, withNote), BAR_FONT))) + 16;
+  const showNotes = widest(true) <= W * 0.45;
+  const valueW = Math.min(Math.round(W * 0.45), widest(showNotes));
   const max = Math.max(1, ...bars.map((b) => b.value));
   const plotW = Math.max(1, W - labelW - valueW);
   const h = bars.length * (BAR + GAP) + GAP;
@@ -40,12 +44,11 @@ export function BarChart({ title, bars }: { title: string; bars: Bar[] }) {
             <g key={b.key}>
               <title>{`${b.label}: ${formatCount(b.value)}${b.note ? ` (${b.note})` : ""}`}</title>
               <text x={labelW - 8} y={y + BAR / 2} className={styles.barLabel} dominantBaseline="middle" textAnchor="end">
-                {clip(b.label)}
+                {clipText(b.label, labelW - 8, BAR_FONT)}
               </text>
               <path d={barPath(labelW, y, w, BAR)} style={{ fill: b.color }} />
               <text x={labelW + w + 8} y={y + BAR / 2} className={styles.barValue} dominantBaseline="middle">
-                {formatCount(b.value)}
-                {b.note ? ` · ${b.note}` : ""}
+                {valueText(b, showNotes)}
               </text>
             </g>
           );

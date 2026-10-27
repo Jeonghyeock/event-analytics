@@ -1,4 +1,5 @@
 import { type RefObject, useLayoutEffect, useState } from "react";
+import { flushSync } from "react-dom";
 
 // 요소의 실제 너비(px). 그래프는 이 너비를 viewBox로 써서 1:1로 그린다: 고정 viewBox를 늘려 그리면 넓은 화면에서는 글자가 커지고
 // 폰에서는 읽을 수 없게 작아진다(스크린숏으로 확인). ResizeObserver가 없으면(jsdom) fallback이다.
@@ -12,7 +13,8 @@ export function useWidth(ref: RefObject<HTMLElement | null>, fallback = 800): nu
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(([entry]) => {
       const w = Math.round(entry!.contentRect.width);
-      if (w > 0) setWidth(w);
+      // 칠하기 전에 다시 그린다(미루면 한 프레임 동안 옛 너비를 늘려 그린다, 코드 리뷰)
+      if (w > 0) flushSync(() => setWidth(w));
     });
     observer.observe(el);
     return () => observer.disconnect();
