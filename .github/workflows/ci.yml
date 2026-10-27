@@ -8,6 +8,20 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      # 로컬과 같은 주 버전
+      postgres:
+        image: postgres:18
+        env:
+          # 이 job이 끝나면 버려지는 DB라 비밀번호 없이 띄운다(저장소에 비밀번호 글자를 두지 않으려고).
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -16,4 +30,39 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
+      # 소유자 주소는 마이그레이션과 테스트 준비만 읽는다(DESIGN 10장 12). 서버와 앱 코드는 앱 role(DML만)이다.
+      - name: 소유자 주소를 쓰는 곳이 정해진 파일뿐인지
+        # grep은 찾으면 0, 못 찾으면 1, 오류(경로가 없음 등)면 2다. 목록으로 견주어 검사가 조용히 꺼지지 않게 한다.
+        run: |
+          src() { grep -rIl --include='*.ts' --include='*.tsx' --include='*.mts' --include='*.cts' \
+            --include='*.js' --include='*.mjs' --include='*.cjs' --include='package.json' \
+            --exclude-dir=node_modules --exclude-dir=dist "$1" apps packages | sort; }
+          found="$(src DATABASE_OWNER_URL)"
+          expected="$(printf '%s\n' \
+            apps/api/src/db/migrate-cli.ts \
+            apps/api/test/global-setup.ts)"
+          test "$found" = "$expected" || { echo "$found"; exit 1; }
+          # 테스트는 앱 role로 돈다. 소유자 주소를 받는 테스트도 정해 둔다.
+          found="$(src ownerDatabaseUrl)"
+          expected="$(printf '%s\n' \
+            apps/api/src/db/migrate.test.ts \
+            apps/api/src/db/roles.test.ts \
+            apps/api/test/global-setup.ts)"
+          test "$found" = "$expected" || { echo "$found"; exit 1; }
+      # 로컬과 같게 슈퍼유저가 아닌 role 둘(소유자, 앱)과, 정렬을 OS에 맡기지 않는 DB를 만든다(README 로컬 준비, DESIGN 10장 13).
+      # 비밀번호는 실행마다 새로 만들어, 저장소에 비밀번호 글자가 남지 않게 한다.
+      - name: role과 DB 만들기(README의 로컬 준비와 같음)
+        run: |
+          OWNER_PASSWORD="$(openssl rand -hex 16)"
+          APP_PASSWORD="$(openssl rand -hex 16)"
+          echo "::add-mask::$OWNER_PASSWORD"
+          echo "::add-mask::$APP_PASSWORD"
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE event_analytics LOGIN CREATEDB PASSWORD '$OWNER_PASSWORD'" \
+            -c "CREATE DATABASE event_analytics OWNER event_analytics TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'" \
+            -c "CREATE ROLE event_analytics_app LOGIN PASSWORD '$APP_PASSWORD'" \
+            -c "GRANT event_analytics_app TO event_analytics"
+          echo "DATABASE_URL=postgres://event_analytics_app:$APP_PASSWORD@localhost:5432/event_analytics" >> "$GITHUB_ENV"
+          echo "DATABASE_OWNER_URL=postgres://event_analytics:$OWNER_PASSWORD@localhost:5432/event_analytics" >> "$GITHUB_ENV"
+      - run: npm run db:migrate -w @event-analytics/api
       - run: npm test

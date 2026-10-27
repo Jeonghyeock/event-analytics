@@ -4,5 +4,7 @@ import { z } from "zod";
 export const HealthResponse = z.object({ status: z.literal("ok") });
 export type HealthResponse = z.infer<typeof HealthResponse>;
 
+export const HealthUnavailable = z.object({ status: z.literal("unavailable") });
+
 export const ErrorResponse = z.object({ error: z.string() });
 export type ErrorResponse = z.infer<typeof ErrorResponse>;
