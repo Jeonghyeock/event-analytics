@@ -69,6 +69,7 @@ describe("집계 작업", () => {
     expect(rows[0].n).toBe(20_000);
     // 다시 돌리면 할 일이 없다
     expect(await runRollup(pool, fast)).toEqual({ skipped: false, chunks: 1, hours: 0, watermark: "2026-10-27T12:00:00.000Z" });
+    await expect(runRollup(pool, { ...fast, chunkHours: 0 })).rejects.toThrow(/chunkHours/);
   });
 
   it("늦은 이벤트가 든 시간은 다음 실행까지 옛 값이고, 실행 뒤 다시 같다(A6)", async () => {
@@ -123,17 +124,32 @@ describe("집계 작업", () => {
     );
     await insertEvents(owner, [event("2026-10-25T05:15:00Z"), event("2026-10-22T03:15:00Z")]);
     const result = await runRollup(pool, fast);
-    expect(result).toMatchObject({ skipped: false, chunks: 3, watermark: "2026-10-27T12:00:00.000Z" });
+    // 범위 60시간(10-25 0시 → 10-27 12시) + 워터마크 앞의 늦은 시간 하나(10-22 03시). 범위 안의 10-25 05시는 범위가 센다.
+    expect(result).toEqual({ skipped: false, chunks: 3, hours: 61, watermark: "2026-10-27T12:00:00.000Z" });
     expect(await diff(pool, "2026-10-27T12:00:00Z")).toBe(0);
   });
 
-  it("여러 날에 걸친 늦은 이벤트를 조각마다 빠짐없이 센다", async () => {
+  it("워터마크 앞의 늦은 이벤트와 뒤 조각들의 범위 안 이벤트를 여러 조각에 걸쳐 빠짐없이 센다", async () => {
     const { owner, pool } = await setup();
     await load(owner);
     await runRollup(pool, fast);
-    await insertEvents(owner, ["2026-10-20T01:05:00Z", "2026-10-23T11:05:00Z", "2026-10-26T22:05:00Z"].map((t) => event(t)));
-    // 작은 조각(6시간)으로 돌아도 모두 센다
-    await runRollup(pool, { ...fast, chunkHours: 6 });
+    // 워터마크를 10-24 0시로 되돌려, 그 뒤 84시간을 6시간 조각 14개로 다시 채우게 한다
+    await owner.query("update rollup_state set watermark = '2026-10-24 00:00+00'");
+    await insertEvents(owner, ["2026-10-20T01:05:00Z", "2026-10-23T11:05:00Z", "2026-10-25T06:05:00Z", "2026-10-26T22:05:00Z"].map((t) => event(t)));
+    const result = await runRollup(pool, { ...fast, chunkHours: 6 });
+    expect(result).toEqual({ skipped: false, chunks: 14, hours: 84 + 2, watermark: "2026-10-27T12:00:00.000Z" });
+    expect(await diff(pool, "2026-10-27T12:00:00Z")).toBe(0);
+  });
+
+  // 따라잡은 뒤 수백 시간이 한꺼번에 더러워져도(예: 생성기가 범위를 적음) 한 트랜잭션이 모두 세지 않는다.
+  it("늦은 시간은 조각마다 chunkHours만 가져와, 따라잡은 뒤에도 여러 조각으로 나눠 센다", async () => {
+    const { owner, pool } = await setup();
+    await load(owner);
+    await runRollup(pool, fast);
+    const late = Array.from({ length: 48 }, (_, i) => event(new Date(Date.parse("2026-10-20T00:05:00Z") + i * 3_600_000).toISOString()));
+    await insertEvents(owner, late);
+    const result = await runRollup(pool, { ...fast, chunkHours: 6 });
+    expect(result).toEqual({ skipped: false, chunks: 8, hours: 48, watermark: "2026-10-27T12:00:00.000Z" });
     expect(await diff(pool, "2026-10-27T12:00:00Z")).toBe(0);
   });
 
@@ -149,12 +165,18 @@ describe("집계 작업", () => {
     await expect(runRollup(pool, fast)).rejects.toThrow(/rollup_state 행이 없습니다/);
   });
 
-  it("워터마크가 보관 기간보다 앞이면 보관 기간의 시작부터 센다(지운 날은 세지 않는다)", async () => {
+  it("워터마크가 보관 기간보다 앞이면 보관 기간의 시작부터 세고, 그 앞의 집계 행과 더러운 시간은 지우기만 한다", async () => {
     const { owner, pool } = await setup("2026-01-01T00:00:00Z");
     await load(owner, 2_000);
+    // 보관 기간의 시작(07-29 0시) 앞에 남은 집계 행과 더러운 시간
+    await owner.query("insert into hourly_rollup (hour, event_name, platform, events) values ('2026-07-01 00:00+00', 'old', 'web', 5)");
+    await owner.query("insert into dirty_hours (hour) values ('2026-07-01 00:00+00'), ('2026-07-28 23:00+00')");
     // 지금 10-27 → 보관 기간의 시작은 07-29 0시. 그 앞 날을 세지 않으니 조각은 07-29부터다.
     const result = await runRollup(pool, { ...fast, chunkHours: 24 * 100 });
+    // 지운 날의 더러운 시간은 세지 않는다(시간 수에 들지 않음)
     expect(result).toMatchObject({ chunks: 1, hours: (Date.parse("2026-10-27T12:00:00Z") - Date.parse("2026-07-29T00:00:00Z")) / 3_600_000 });
     expect(await diff(pool, "2026-10-27T12:00:00Z")).toBe(0);
+    const left = await pool.query("select (select count(*) from hourly_rollup where hour < '2026-07-29') ::int as rollup, (select count(*) from dirty_hours)::int as dirty");
+    expect(left.rows).toEqual([{ rollup: 0, dirty: 0 }]);
   });
 });
