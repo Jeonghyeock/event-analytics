@@ -1,5 +1,5 @@
 import type { FunnelQuery, FunnelResult } from "@event-analytics/shared";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { hashKey, keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { runFunnel } from "../api/endpoints";
 import { BarChart } from "../components/BarChart";
@@ -14,6 +14,11 @@ import styles from "./ReportsPage.module.css";
 // 퍼널 화면(DESIGN 6.5, 6.7): 단계별 사용자 수와 전환율. 전환율은 화면이 나눈다.
 export function FunnelsPage() {
   const [query, setQuery] = useState<FunnelQuery | null>(null);
+  // 같은 설정으로 다시 "보기"를 누르면 다시 센다(키가 같아 저절로는 다시 묻지 않는다)
+  const submit = (q: FunnelQuery) => {
+    if (query !== null && hashKey(["funnel", q]) === hashKey(["funnel", query])) void funnel.refetch();
+    else setQuery(q);
+  };
   const funnel = useQuery({
     queryKey: ["funnel", query],
     enabled: query !== null,
@@ -25,7 +30,7 @@ export function FunnelsPage() {
   return (
     <>
       <h1>퍼널</h1>
-      <FunnelFormView initial={initial} onSubmit={setQuery} />
+      <FunnelFormView initial={initial} onSubmit={submit} />
       <section className={styles.result} aria-label="결과" aria-busy={funnel.isFetching}>
         {query === null ? (
           <p className={styles.muted}>단계를 고르고 "보기"를 누르세요.</p>
