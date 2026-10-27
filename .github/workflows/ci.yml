@@ -47,6 +47,7 @@ jobs:
             apps/api/src/e2e-serve-cli.ts \
             apps/api/src/load/detach-rehearsal-cli.ts \
             apps/api/src/load/generate-cli.ts \
+            apps/api/src/load/run-cli.ts \
             apps/api/src/load/template-cli.ts \
             apps/api/test/global-setup.ts \
             apps/web/playwright.config.ts)"

@@ -26,6 +26,8 @@ describe("측정 템플릿", () => {
       "insert into dirty_hours (hour) select generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour')",
       [`${addDays(today, -3)}T00:00:00Z`, `${today}T00:00:00Z`],
     );
+    // 개발 DB처럼 원본의 부모에 통계가 있어도 템플릿에서는 지운다
+    await owner.query("analyze events");
     // 복제하려면 원본에 연결이 없어야 한다
     await owner.end();
 
