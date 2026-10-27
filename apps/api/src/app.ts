@@ -4,12 +4,13 @@ import Fastify, { type FastifyError, type FastifyServerOptions } from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import type pg from "pg";
 import type { ReportOptions } from "./reports/run.js";
+import { funnelRoutes } from "./routes/funnels.js";
 import { ingestRoutes } from "./routes/ingest.js";
 import { reportRoutes } from "./routes/reports.js";
 
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
 // ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
-// reportPool은 리포트 전용 풀이다(없으면 pool을 함께 쓴다, 테스트). reports는 리포트의 한도와 "지금"을 테스트가 바꿀 때만 넘긴다.
+// reportPool은 리포트·퍼널·리텐션 전용 풀이다(없으면 pool을 함께 쓴다, 테스트). reports는 그 한도와 "지금"을 테스트가 바꿀 때만 넘긴다.
 export function buildApp(
   pool: pg.Pool,
   options: FastifyServerOptions = {},
@@ -52,6 +53,7 @@ export function buildApp(
 
   app.register(ingestRoutes, { pool, writeKey: services.ingestWriteKey ?? randomBytes(32).toString("hex") });
   app.register(reportRoutes, { pool: services.reportPool ?? pool, options: services.reports });
+  app.register(funnelRoutes, { pool: services.reportPool ?? pool, options: services.reports });
 
   return app;
 }

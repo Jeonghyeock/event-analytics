@@ -62,3 +62,10 @@ function failure(err: unknown) {
   if (code === "55P03" || code === "40P01") return new ReportFailed("busy", "DB가 바빠 처리하지 못했습니다. 잠시 뒤 다시 하세요", { cause: err });
   return null;
 }
+
+// 경로의 응답: 행이 너무 많거나 보관 기간 밖이면 422, 시간 한도·DB가 바쁘면 503. ReportFailed가 아니면 null(그대로 던져 500).
+export function failureReply(err: unknown) {
+  if (!(err instanceof ReportFailed)) return null;
+  const status = err.code === "too_many_rows" || err.code === "out_of_retention" ? 422 : 503;
+  return { status, body: { error: err.message, code: err.code } } as const;
+}
