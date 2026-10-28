@@ -5,7 +5,7 @@ import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js"
 import { addDays, createDailyPartitions, dbToday, partitionName } from "../db/partitions.js";
 import { insertEvents } from "../ingest.js";
 import { generate } from "./generate.js";
-import { buildLoadTemplate, cloneLoadDatabase, loadDatabaseState } from "./template.js";
+import { buildLoadTemplate, checkSourceName, checkTemplateName, cloneLoadDatabase, loadDatabaseState, TEMPLATE_INFO_FILE, templateInfoFile } from "./template.js";
 
 // 측정 템플릿(DESIGN 6.8, 10장 59). 실제 이름(event_analytics_load*) 대신 테스트마다의 이름으로 만든다.
 describe("측정 템플릿", () => {
@@ -93,5 +93,22 @@ describe("측정 템플릿", () => {
     await expect(buildLoadTemplate(ownerUrl, { source: new URL(source.owner).pathname.slice(1), template })).rejects.toThrow(
       /연결이 남아 있어/,
     );
+  });
+});
+
+// 명령줄로 받는 이름(5,000만 건 템플릿). 템플릿은 만들기 전에 지우므로 측정용 접두어만 받는다(개발 DB를 지우지 않게).
+describe("템플릿 이름", () => {
+  it("템플릿은 event_analytics_load_ 뒤에 이름이 있어야 한다. 개발 DB·회차의 복제·다른 DB 이름과 SQL이 섞인 이름은 거절한다", () => {
+    expect(checkTemplateName("event_analytics_load_50m_template")).toBe("event_analytics_load_50m_template");
+    for (const bad of ["event_analytics", "event_analytics_load", "seat_booking", "event_analytics_load_x; drop database event_analytics", "Event_analytics_load_x"]) {
+      expect(() => checkTemplateName(bad)).toThrow(/event_analytics_load_/);
+    }
+    expect(checkSourceName("event_analytics")).toBe("event_analytics");
+    expect(() => checkSourceName('event_analytics"; drop')).toThrow(/원본 DB 이름/);
+  });
+
+  it("기록 파일은 기본 템플릿이면 예전 이름, 아니면 템플릿마다 따로다", () => {
+    expect(templateInfoFile("event_analytics_load_template")).toEqual(TEMPLATE_INFO_FILE);
+    expect(templateInfoFile("event_analytics_load_50m_template").pathname).toMatch(/load-template\.event_analytics_load_50m_template\.json$/);
   });
 });

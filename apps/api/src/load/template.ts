@@ -6,12 +6,28 @@ import { createPool } from "../db/pool.js";
 import { runRollup } from "../rollup.js";
 
 // 측정 템플릿(DESIGN 6.8 "측정 템플릿", 10장 59). 개발 DB는 계속 바뀌므로(집계 작업, 관리 작업, 손으로 한 ANALYZE)
-// 측정 전용 템플릿을 한 번 만들고, 회차마다 그것을 복제한다. 이름은 여기서 정하고 밖에서 받지 않는다(다른 DB를 지우지 않게).
+// 측정 전용 템플릿을 한 번 만들고, 회차마다 그것을 복제한다. 기본 이름은 여기서 정한다.
 export const TEMPLATE_DATABASE = "event_analytics_load_template";
 export const LOAD_DATABASE = "event_analytics_load";
 // load/results(gitignore). 템플릿을 만든 기록과 측정 결과를 둔다.
 export const RESULTS_DIR = new URL("../../../../load/results/", import.meta.url);
 export const TEMPLATE_INFO_FILE = new URL("load-template.json", RESULTS_DIR);
+
+// 명령줄로 받는 템플릿 이름(5,000만 건 등). 만들 때 그 이름의 DB를 먼저 지우므로, 측정용 접두어가 붙은 이름만 받는다
+// (개발 DB나 다른 프로젝트의 DB를 지우지 않게). 회차의 복제(event_analytics_load)와 겹치지 않게 접두어 뒤에 이름이 있어야 한다.
+const TEMPLATE_NAME = /^event_analytics_load_[a-z0-9_]+$/;
+export function checkTemplateName(name: string) {
+  if (!TEMPLATE_NAME.test(name)) throw new Error(`템플릿 이름은 event_analytics_load_로 시작하고 소문자·숫자·_만 씁니다: ${name}`);
+  return name;
+}
+// 원본은 복제만 하므로 지우지 않는다. SQL에 이름을 그대로 넣으므로 식별자 모양만 받는다.
+export function checkSourceName(name: string) {
+  if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error(`원본 DB 이름은 소문자·숫자·_만 씁니다: ${name}`);
+  return name;
+}
+// 템플릿마다의 기록 파일. 기본 템플릿은 예전 이름(load-template.json)을 그대로 쓴다.
+export const templateInfoFile = (name: string) =>
+  name === TEMPLATE_DATABASE ? TEMPLATE_INFO_FILE : new URL(`load-template.${name}.json`, RESULTS_DIR);
 
 // 복제는 원본 DB에 연결이 하나도 없어야 한다(개발 API를 끈다). FILE_COPY는 앞뒤로 체크포인트를 하고 WAL을 적게 쓴다.
 // 기본값 WAL_LOG는 DB 전체를 WAL로 써서 측정 앞부분에 체크포인트가 겹친다(설계 리뷰).
