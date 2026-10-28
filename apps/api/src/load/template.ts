@@ -126,7 +126,7 @@ export async function loadDatabaseState(url: string) {
     // 회차마다 남겨, 전후 회차를 맞는 코드로 돌렸는지 본다.
     const parent = await one<{ stats: number; ext: number }>(
       `select (select count(*)::int from pg_stats where schemaname = 'public' and tablename = 'events') as stats,
-              (select count(*)::int from pg_stats_ext where schemaname = 'public' and tablename = 'events' and n_distinct is not null) as ext`,
+              (select count(*)::int from pg_statistic_ext where stxrelid = 'events'::regclass) as ext`,
     );
     // public의 일반 표마다 VM·죽은 행·통계·autovacuum. 파티션은 하나로 묶어 가장 덜 된 값을 쓴다.
     const tables = (
@@ -160,7 +160,8 @@ export async function loadDatabaseState(url: string) {
       eventRows: events.rows,
       days: { first: events.first_day, last: events.last_day },
       parentStats: parent.stats,
-      // (사용자, 날) 확장 통계가 만들어졌는지(마이그레이션 0004 + 부모 분석)
+      // 부모의 확장 통계 객체 수(마이그레이션 0004가 둘을 만든다). 값이 찼는지는 pg_stats_ext로 보는데, 그 뷰는 표의 소유자에게만
+      // 행을 보여 준다(앱 role로 읽으면 늘 0). 그래서 객체가 있는지만 남기고, 값이 차는 것은 관리 작업 테스트가 지킨다.
       parentExtStats: parent.ext,
       tables,
       settings: { ...Object.fromEntries(settings.map((s) => [s.name, s.setting])), jitAvailable: String(jit.available) },
