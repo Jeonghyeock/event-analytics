@@ -23,7 +23,7 @@ import {
   type Window,
 } from "./report.js";
 import { snapshotStats, startActivitySampler } from "./samplers.js";
-import { cloneLoadDatabase, LOAD_DATABASE, loadDatabaseState, RESULTS_DIR, TEMPLATE_INFO_FILE } from "./template.js";
+import { checkTemplateName, cloneLoadDatabase, LOAD_DATABASE, loadDatabaseState, RESULTS_DIR, TEMPLATE_DATABASE, templateInfoFile } from "./template.js";
 
 // 부하 측정(DESIGN 6.8). seat-booking 6단계의 실행기를 가져왔다. 회차마다:
 //   템플릿 복제(FILE_COPY, 지난 7일 ~ 앞으로 7일의 파티션) → 상태 기록(더러운 시간이 있으면 거절) → API(P코어, LOAD_STATS) → 집계 따라잡기
@@ -54,6 +54,8 @@ const { values: args } = parseArgs({
     mix: { type: "string", default: "weighted" },
     "open-rates": { type: "string" },
     "open-warmup": { type: "string", default: "60" },
+    // 복제할 템플릿(기본 1,000만 건, 5,000만 건은 따로 만든 이름)
+    template: { type: "string", default: TEMPLATE_DATABASE },
     // 정상 구간이 UTC 정시를 넘지 않게 기다릴지(S2)
     "no-align": { type: "boolean", default: false },
   },
@@ -65,7 +67,9 @@ const ownerUrl = process.env.DATABASE_OWNER_URL;
 if (!ownerUrl) throw new Error("DATABASE_OWNER_URL이 없습니다(.env 또는 환경 변수)");
 const scene = args.scene;
 if (scene !== "s1" && scene !== "s2" && scene !== "s2open") throw new Error("--scene은 s1, s2, s2open 가운데 하나입니다");
-if (!existsSync(TEMPLATE_INFO_FILE)) throw new Error("측정 템플릿이 없습니다. npm run load:template -w @event-analytics/api로 만드세요");
+const template = checkTemplateName(args.template);
+const templateInfo = templateInfoFile(template);
+if (!existsSync(templateInfo)) throw new Error(`측정 템플릿(${template})이 없습니다. npm run load:template -w @event-analytics/api로 만드세요`);
 const positive = (name: string, value: string | undefined) => {
   const n = Number(value);
   if (!(n > 0)) throw new Error(`--${name}가 없거나 잘못됐습니다`);
@@ -183,7 +187,7 @@ async function runCycle({ name, vars, seconds }: Cycle) {
   let apiPid = -1;
   let othersBaseline: number | null = null;
   try {
-    await cloneLoadDatabase(ownerUrl!);
+    await cloneLoadDatabase(ownerUrl!, { template });
     const before = await loadDatabaseState(loadAppUrl);
     out.stateBefore = before;
     if (before.dirtyHours > 0) throw new Error(`복제본에 더러운 시간이 ${before.dirtyHours}개 있습니다. 템플릿을 다시 만드세요`);
@@ -296,7 +300,7 @@ const report: Record<string, unknown> = {
   scene,
   startedAt: new Date().toISOString(),
   args,
-  template: JSON.parse(readFileSync(TEMPLATE_INFO_FILE, "utf8")),
+  template: JSON.parse(readFileSync(templateInfo, "utf8")),
   mix: mix.map(({ key, name, weight }) => ({ key, name, weight })),
   pinned: masks ? { api: masks.performance, k6: masks.efficient } : "묶지 않음(코어 종류가 하나)",
 };

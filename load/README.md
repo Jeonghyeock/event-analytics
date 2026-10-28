@@ -35,6 +35,7 @@
 | `--n 4`, `--minutes 20` | S2: 마케터 수, 정상 구간 분(예열은 VU마다 묶음 한 바퀴) |
 | `--mix weighted\|equal` | S2: 리포트 몫(3·2·2·2·1·1·2 또는 모두 1) |
 | `--open-rates r1:6,r6:2.7,…`, `--open-warmup 60` | S2open: 종류마다 분당 도착률(소수 가능), 예열 초 |
+| `--template` | 복제할 템플릿(기본 `event_analytics_load_template`). `event_analytics_load_`로 시작하는 이름만 받습니다 |
 | `--no-align` | 정상 구간이 UTC 정시를 넘지 않게 기다리지 않습니다(시험용) |
 
 예:
@@ -42,6 +43,16 @@
 - S2 판단 회차: `--scene s2 --n 4 --minutes 20`
 - S2 N 훑기(설명용): `--scene s2 --n 1 --minutes 5`, 그다음 `--n 2`, `--n 4`, `--n 8`
 - 같은 몫: `--scene s2 --n 4 --minutes 20 --mix equal`
+
+## 5,000만 건
+
+DESIGN 6.8 "5,000만 건"입니다. 개발 DB는 그대로 둡니다.
+1. 개발 DB로 중간 템플릿을 만듭니다: `npm run load:template -w @event-analytics/api -- --template event_analytics_load_50m_src`
+2. 거기에 생성기로 4,000만 건을 더합니다. 소유자 주소의 DB 이름만 `event_analytics_load_50m_src`로 바꿔 돌립니다(`DATABASE_OWNER_URL`을 환경에 주면 `.env`보다 앞섭니다).
+   - 예: `--events 40000000 --users 1000000 --days 89 --end-day 2026-10-27 --seed 2`
+   - 씨앗을 개발 DB(1)와 달리 해서 `event_id`가 겹치지 않게 합니다. 생성기는 넣은 범위를 더러운 시간으로 적습니다.
+3. 그것을 원본으로 측정 템플릿을 만듭니다(집계를 끝까지, 잎 `VACUUM (FREEZE, ANALYZE)`, 부모 통계 지움): `npm run load:template -w @event-analytics/api -- --source event_analytics_load_50m_src --template event_analytics_load_50m_template`
+4. 회차마다 `--template event_analytics_load_50m_template`을 줍니다. 템플릿 기록은 `load/results/load-template.<이름>.json`입니다.
 
 ## 결과 폴더
 
