@@ -12,7 +12,7 @@ TypeScript · Fastify · PostgreSQL 18 · zod · Vitest · React · TanStack Que
 
 ## 로컬 실행
 
-필요: Node.js 22.22 이상(24.x 권장), PostgreSQL 18(17 이상이면 된다. 아래 DB가 builtin 정렬을 쓴다).
+필요: Node.js 22.22 이상(24.x 권장), PostgreSQL 18(관리 작업의 `ANALYZE ONLY`가 18부터다. 아래 DB는 17부터 있는 builtin 정렬을 쓴다).
 
 슈퍼유저가 아닌 role 둘로 접속한다. 슈퍼유저로 psql에 들어가 한 번만 만든다.
 - 소유자 `event_analytics`: 표의 주인이다. 마이그레이션과 테스트 준비가 쓴다. `CREATEDB`는 테스트가 DB를 복제하는 데 쓴다.
@@ -33,7 +33,7 @@ GRANT event_analytics_app TO event_analytics;
 ```sh
 npm ci
 npm run db:migrate -w @event-analytics/api   # 마이그레이션(apps/api/drizzle/)
-npm run db:maintain -w @event-analytics/api   # 파티션 관리: 오늘(UTC) ±7일 만들기, 90일 지난 날 떼고 지우기
+npm run db:maintain -w @event-analytics/api   # 파티션 관리: 오늘(UTC) ±7일 만들기, 90일 지난 날 떼고 지우기, 부모 표 통계
 npm run rollup:run -w @event-analytics/api     # 시간 집계 표 채우기(서버는 1분마다 스스로 돈다)
 npm test                                     # 템플릿 DB를 복제한 테스트 DB에서 돌고, 끝나면 지운다
 npm run dev                                  # API: http://127.0.0.1:3002
