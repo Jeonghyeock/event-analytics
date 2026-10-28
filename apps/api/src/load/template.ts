@@ -1,5 +1,6 @@
 import pg from "pg";
 import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js";
+import { runMigrations } from "../db/migrate.js";
 import { addDays, AHEAD_DAYS, analyzeParent, BEHIND_DAYS, createDailyPartitions, dbToday } from "../db/partitions.js";
 import { createPool } from "../db/pool.js";
 import { runRollup } from "../rollup.js";
@@ -88,8 +89,10 @@ export async function buildLoadTemplate(ownerUrl: string, { source, template = T
 // 지난 7일이 없으면 늦은 이벤트가 partition_missing으로 503이 된다(코드 리뷰). 떼기는 돌지 않는다: 날이 지나면 보관 기간 밖
 // 날이 생기지만, 회차마다 파티션 수와 행 수를 남겨 같은 일을 했는지 본다.
 // 부모 표의 통계(10장 62): 템플릿은 부모를 분석하지 않은 채 두고(고치기 전의 운영), 회차마다 관리 작업처럼 분석한다(고친 뒤의 운영).
+// 템플릿보다 뒤의 마이그레이션(고침의 확장 통계 등)은 복제에 먼저 적용한다. 그래야 템플릿을 다시 만들지 않고 전후를 번갈아 잴 수 있다.
 export async function cloneLoadDatabase(ownerUrl: string, { template = TEMPLATE_DATABASE, target = LOAD_DATABASE } = {}) {
   const url = await cloneDatabase(ownerUrl, template, target);
+  await runMigrations(url);
   const client = new pg.Client({ connectionString: url, application_name: "event-analytics-load-runner" });
   await client.connect();
   try {
@@ -121,7 +124,10 @@ export async function loadDatabaseState(url: string) {
     );
     // 부모(events)의 통계가 있는지: 자동으로 분석되지 않아 템플릿에는 없고(고치기 전의 운영), 고친 뒤에는 복제가 관리 작업처럼 분석한다(10장 62).
     // 회차마다 남겨, 전후 회차를 맞는 코드로 돌렸는지 본다.
-    const parent = await one<{ stats: number }>("select count(*)::int as stats from pg_stats where schemaname = 'public' and tablename = 'events'");
+    const parent = await one<{ stats: number; ext: number }>(
+      `select (select count(*)::int from pg_stats where schemaname = 'public' and tablename = 'events') as stats,
+              (select count(*)::int from pg_stats_ext where schemaname = 'public' and tablename = 'events' and n_distinct is not null) as ext`,
+    );
     // public의 일반 표마다 VM·죽은 행·통계·autovacuum. 파티션은 하나로 묶어 가장 덜 된 값을 쓴다.
     const tables = (
       await client.query(
@@ -154,6 +160,8 @@ export async function loadDatabaseState(url: string) {
       eventRows: events.rows,
       days: { first: events.first_day, last: events.last_day },
       parentStats: parent.stats,
+      // (사용자, 날) 확장 통계가 만들어졌는지(마이그레이션 0004 + 부모 분석)
+      parentExtStats: parent.ext,
       tables,
       settings: { ...Object.fromEntries(settings.map((s) => [s.name, s.setting])), jitAvailable: String(jit.available) },
     };

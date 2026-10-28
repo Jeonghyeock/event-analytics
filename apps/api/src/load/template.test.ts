@@ -71,6 +71,8 @@ describe("측정 템플릿", () => {
     expect(Math.round(cloned.eventRows)).toBe(3_000);
     // 관리 작업처럼 부모의 통계를 새로 했다(템플릿에는 없다)
     expect(cloned.parentStats).toBeGreaterThan(0);
+    // (사용자, 날) 확장 통계(0004)도 부모 분석으로 만들어졌다
+    expect(cloned.parentExtStats).toBe(2);
   });
 
   it("원본과 대상이 같으면 지우기 전에 거절한다", async () => {

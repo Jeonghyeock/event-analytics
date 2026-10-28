@@ -248,6 +248,29 @@ describe("관리 작업", () => {
     expect(rows).toEqual([{ leaf: 0 }]);
   });
 
+  it("(사용자, 한국 날) 무리 수는 확장 통계(0004)로 어림한다. 리포트처럼 시간대를 매개변수로 보내도 식이 맞는다", async () => {
+    const db = await freshDatabase();
+    const owner = await connect(db.owner);
+    await maintain(owner, { today, ...fast });
+    const app = await connect(db.app);
+    // 사용자 5명 × 한국 날 이틀(10-26 00:00 KST부터 10분마다 200행): 무리는 10개다
+    await app.query(
+      `insert into events (event_id, occurred_at, user_id, event_name, platform)
+       select gen_random_uuid(), '2026-10-25 15:00+00'::timestamptz + i * interval '10 minutes', 'u' || (i % 5), 'e', 'web'
+         from generate_series(0, 199) i`,
+    );
+    await maintain(owner, { today, ...fast });
+    const estimate = async (sql: string) =>
+      (await app.query(`explain (format json) ${sql}`, ["Asia/Seoul"])).rows[0]["QUERY PLAN"][0].Plan["Plan Rows"] as number;
+    const retention = "select user_id, (occurred_at at time zone $1::text)::date from events group by 1, 2";
+    const users = "select date_trunc('day', occurred_at, $1::text), user_id from events group by 1, 2";
+    expect(await estimate(retention)).toBe(10);
+    expect(await estimate(users)).toBe(10);
+    // 확장 통계가 없으면 열의 어림(사용자 5 × 시각 200)으로 돌아간다
+    await owner.query("drop statistics events_user_date_kst");
+    expect(await estimate(retention)).toBeGreaterThan(10);
+  });
+
   it("부모 통계가 잠금 대기에 닿으면 그 단계만 실패로 남는다(다른 단계와 advisory lock은 그대로)", async () => {
     const db = await freshDatabase();
     const owner = await connect(db.owner);
