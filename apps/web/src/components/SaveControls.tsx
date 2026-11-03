@@ -42,9 +42,15 @@ export function SaveControls<K extends SavedReportKind>({
 
   const save = useMutation({
     mutationFn: ({ id, input }: SaveVars) => (id === null ? createSavedReport(input) : updateSavedReport(id, input)),
-    // 목록을 새로 받은 뒤에 끝나게 promise 를 돌려준다. 아래 submit 의 onSuccess(저장한 리포트로 옮겨 가기)는 그다음에 돈다.
-    // 기다리지 않으면 옮겨 간 화면이 덮어쓰기 전 목록으로 열려 "저장 안 된 변경"이 뜨고, 다시 저장하면 덮어쓰기가 되돌려졌다.
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: SAVED_KEY }),
+    // 저장한 리포트로 옮겨 가기(아래 submit 의 onSuccess) 전에, 응답의 리포트로 캐시 목록부터 고친다. 목록을 다시 읽기 전에
+    // 옮겨 가면 덮어쓰기 전 목록으로 열려 "저장 안 된 변경"이 뜨고, 다시 저장하면 덮어쓰기가 되돌려졌다.
+    // 순서(새것은 끝에 붙음)는 곧 다시 읽는 목록(서버가 정한 순서)으로 맞춰진다.
+    onSuccess: ({ item }) => {
+      queryClient.setQueryData<{ items: SavedReport[] }>(SAVED_KEY, (old) =>
+        old && { ...old, items: old.items.some((i) => i.id === item.id) ? old.items.map((i) => (i.id === item.id ? item : i)) : [...old.items, item] },
+      );
+      void queryClient.invalidateQueries({ queryKey: SAVED_KEY });
+    },
   });
 
   const submit = (target: string | null) => {
@@ -182,7 +188,11 @@ export function DeleteSaved({ item }: { item: SavedReport }) {
         if (!(error instanceof ApiError && error.status === 404)) throw error;
       }
     },
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: SAVED_KEY }),
+    // 목록 화면으로 옮겨 가기 전에 캐시 목록에서 빼 둔다(다시 읽기 전에 지운 것이 목록에 남아 눌리지 않게)
+    onSuccess: () => {
+      queryClient.setQueryData<{ items: SavedReport[] }>(SAVED_KEY, (old) => old && { ...old, items: old.items.filter((i) => i.id !== item.id) });
+      void queryClient.invalidateQueries({ queryKey: SAVED_KEY });
+    },
   });
   const confirm = () =>
     remove.mutate(undefined, {
