@@ -67,6 +67,8 @@ let listFails: boolean;
 // 저장한 리포트 쓰기(hold)와 리포트 세기(holdRuns)의 응답을 붙잡아 둔다(기다리는 사이의 일을 보려고). 풀면 응답이 나간다.
 let hold: Promise<void> | null;
 let holdRuns: Promise<void> | null;
+// 저장한 리포트 목록 읽기(GET)의 응답을 붙잡아 둔다(쓰기 뒤 목록이 늦게 오는 경우를 보려고)
+let holdList: Promise<void> | null;
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
@@ -88,6 +90,7 @@ beforeEach(() => {
   listFails = false;
   hold = null;
   holdRuns = null;
+  holdList = null;
   let next = 100;
   vi.stubGlobal(
     "fetch",
@@ -95,6 +98,7 @@ beforeEach(() => {
       const method = init.method ?? "GET";
       const body = init.body === undefined ? undefined : (JSON.parse(String(init.body)) as Record<string, unknown>);
       if (url === "/api/saved-reports" && method === "GET") {
+        if (holdList) await holdList;
         if (listFails) return json({ error: "서버 오류" }, 500);
         return json({ items: store.toSorted((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())) });
       }
@@ -388,6 +392,26 @@ describe("저장", () => {
     await userEvent.click(screen.getByRole("button", { name: "덮어쓰기" }));
     await vi.waitFor(() => expect(router.state.location.search).toBe(`?saved=${ID.hourly}`));
     expect(writes.at(-1)).toEqual({ method: "PUT", path: `/api/saved-reports/${ID.hourly}`, body: { kind: "report", name: "시간별 이벤트", config: reportConfig() } });
+  });
+
+  it("덮어쓴 뒤에는 새 목록을 받고 나서 그 리포트를 열어, 방금 저장한 설정으로 보인다(목록이 늦게 와도)", async () => {
+    // 고치기 전에는 목록을 다시 읽기 전에 옮겨 가서, 덮어쓰기 전 설정(시간별)으로 열리고 "저장 안 된 변경"이 떴다.
+    // 거기서 다시 저장하면 방금 한 덮어쓰기가 되돌려졌다.
+    const router = renderAt("/reports");
+    await viewAndName("시간별 이벤트");
+    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    await screen.findByRole("alert");
+    let release!: () => void;
+    holdList = new Promise((resolve) => (release = resolve));
+    await userEvent.click(screen.getByRole("button", { name: "덮어쓰기" }));
+    await vi.waitFor(() => expect(writes.at(-1)?.method).toBe("PUT"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(router.state.location.search).toBe("");
+    release();
+    await vi.waitFor(() => expect(router.state.location.search).toBe(`?saved=${ID.hourly}`));
+    await vi.waitFor(() => expect(select("단위").value).toBe("day"));
+    await screen.findByRole("table");
+    expect(screen.queryByText("저장 안 된 변경")).toBeNull();
   });
 
   it("다른 종류가 그 이름을 쓰면 덮어쓰기를 권하지 않는다(덮으면 그 퍼널이 사라진다)", async () => {

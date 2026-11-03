@@ -42,7 +42,9 @@ export function SaveControls<K extends SavedReportKind>({
 
   const save = useMutation({
     mutationFn: ({ id, input }: SaveVars) => (id === null ? createSavedReport(input) : updateSavedReport(id, input)),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: SAVED_KEY }),
+    // 목록을 새로 받은 뒤에 끝나게 promise 를 돌려준다. 아래 submit 의 onSuccess(저장한 리포트로 옮겨 가기)는 그다음에 돈다.
+    // 기다리지 않으면 옮겨 간 화면이 덮어쓰기 전 목록으로 열려 "저장 안 된 변경"이 뜨고, 다시 저장하면 덮어쓰기가 되돌려졌다.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: SAVED_KEY }),
   });
 
   const submit = (target: string | null) => {
