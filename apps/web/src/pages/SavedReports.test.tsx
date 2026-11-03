@@ -394,7 +394,7 @@ describe("저장", () => {
     expect(writes.at(-1)).toEqual({ method: "PUT", path: `/api/saved-reports/${ID.hourly}`, body: { kind: "report", name: "시간별 이벤트", config: reportConfig() } });
   });
 
-  it("덮어쓴 뒤에는 새 목록을 받고 나서 그 리포트를 열어, 방금 저장한 설정으로 보인다(목록이 늦게 와도)", async () => {
+  it("덮어쓰면 목록을 다시 읽기 전에도 그 리포트가 방금 저장한 설정으로 열린다", async () => {
     // 고치기 전에는 목록을 다시 읽기 전에 옮겨 가서, 덮어쓰기 전 설정(시간별)으로 열리고 "저장 안 된 변경"이 떴다.
     // 거기서 다시 저장하면 방금 한 덮어쓰기가 되돌려졌다.
     const router = renderAt("/reports");
@@ -402,16 +402,16 @@ describe("저장", () => {
     await userEvent.click(screen.getByRole("button", { name: "저장" }));
     await screen.findByRole("alert");
     let release!: () => void;
-    holdList = new Promise((resolve) => (release = resolve));
-    await userEvent.click(screen.getByRole("button", { name: "덮어쓰기" }));
-    await vi.waitFor(() => expect(writes.at(-1)?.method).toBe("PUT"));
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(router.state.location.search).toBe("");
-    release();
-    await vi.waitFor(() => expect(router.state.location.search).toBe(`?saved=${ID.hourly}`));
-    await vi.waitFor(() => expect(select("단위").value).toBe("day"));
-    await screen.findByRole("table");
-    expect(screen.queryByText("저장 안 된 변경")).toBeNull();
+    holdList = new Promise((resolve) => (release = resolve)); // 덮어쓴 뒤 목록 다시 읽기를 붙잡아 둔다
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "덮어쓰기" }));
+      await vi.waitFor(() => expect(router.state.location.search).toBe(`?saved=${ID.hourly}`));
+      await vi.waitFor(() => expect(select("단위").value).toBe("day"));
+      await screen.findByRole("table");
+      expect(screen.queryByText("저장 안 된 변경")).toBeNull();
+    } finally {
+      release();
+    }
   });
 
   it("다른 종류가 그 이름을 쓰면 덮어쓰기를 권하지 않는다(덮으면 그 퍼널이 사라진다)", async () => {
@@ -479,6 +479,21 @@ describe("지우기", () => {
     await vi.waitFor(() => expect(announced()).toBe('"일별 이벤트"을(를) 지웠습니다.'));
     await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole("heading", { name: "리포트" })));
     await vi.waitFor(() => expect(within(savedList()).queryByRole("link", { name: /일별 이벤트/ })).toBeNull());
+  });
+
+  it("지우면 목록을 다시 읽기 전에도 왼쪽 목록에서 빠진다", async () => {
+    renderAt(`/reports?saved=${ID.daily}`);
+    await screen.findByRole("table");
+    let release!: () => void;
+    holdList = new Promise((resolve) => (release = resolve)); // 지운 뒤 목록 다시 읽기를 붙잡아 둔다
+    try {
+      await userEvent.click(screen.getByRole("button", { name: "지우기" }));
+      await userEvent.click(screen.getByRole("button", { name: "정말 지우기" }));
+      await vi.waitFor(() => expect(announced()).toBe('"일별 이벤트"을(를) 지웠습니다.'));
+      expect(within(savedList()).queryByRole("link", { name: /일별 이벤트/ })).toBeNull();
+    } finally {
+      release();
+    }
   });
 
   it("저장한 뒤 지우면 \"저장했습니다\"가 남지 않는다", async () => {
