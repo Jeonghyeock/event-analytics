@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, inject, it } from "vitest";
-import { createPool } from "./pool.js";
+import { createPool, poolErrorLog } from "./pool.js";
 
 describe("createPool", () => {
   const pool = createPool({ connectionString: inject("databaseUrl") });
@@ -42,5 +42,12 @@ describe("createPool", () => {
     } finally {
       await other.end();
     }
+  });
+});
+
+describe("poolErrorLog", () => {
+  it("메시지와 코드만 싣는다(pg-pool이 오류에 붙인 client는 뺀다)", () => {
+    const err = Object.assign(new Error("terminating connection due to administrator command"), { code: "57P01", client: { host: "x" } });
+    expect(poolErrorLog(err)).toEqual({ err: { message: "terminating connection due to administrator command", code: "57P01" } });
   });
 });
