@@ -688,9 +688,12 @@
 
 | PR | 내용 |
 |---|---|
-| [#48](https://github.com/Jeonghyeock/event-analytics/pull/48) | 저장한 리포트 목록을 숫자 값 순으로(1·2·10), 목록의 h2가 화면의 h1 뒤에 오게 |
+| [#48](https://github.com/Jeonghyeock/event-analytics/pull/48) | 저장한 리포트 목록을 숫자 값 순으로(1·2·10), 목록 이름을 제목(h2)에서 빼 문서의 첫 제목이 화면의 h1이 되게 |
 | [#49](https://github.com/Jeonghyeock/event-analytics/pull/49) | 이 기록, DESIGN 10장 69~72 |
+| [#50](https://github.com/Jeonghyeock/event-analytics/pull/50) | 풀 오류 로그는 메시지·코드만(연결 정보 빼기), `/health` 끊기 테스트는 이 DB의 연결로 좁힘 |
 | [seat-booking #62](https://github.com/Jeonghyeock/seat-booking/pull/62) | API 풀의 쉬는 연결이 끊겨도 프로세스가 죽지 않게 `'error'`를 듣는다 |
+
+리뷰에서 바꾼 것: #48은 처음에 문서 순서를 본문 → 목록으로 바꾸고 CSS `order`로 목록을 왼쪽에 보였다. 키보드 순서가 보이는 순서와 어긋나서, 문서 순서는 두고 목록 이름만 제목에서 뺐다(목록은 내비게이션 이름으로 찾는다).
 
 알고 남긴 것(고치지 않음):
 - 집계 작업이 늦은 이벤트를 따라잡지 못하고 커진다. 한 바퀴의 일에 한도가 없고, 늦은 한 시간마다 그 날 파티션을 다시 훑는다(7단계).
