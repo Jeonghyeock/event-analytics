@@ -34,12 +34,12 @@ describe("Layout", () => {
     expect(document.activeElement).toBe(await screen.findByRole("heading", { name: "퍼널" }));
   });
 
-  it("문서의 첫 제목은 화면의 h1이고, 저장한 리포트 목록의 h2는 그 뒤에 온다", async () => {
+  it("문서의 첫 제목은 화면의 h1이다(앞에 있는 저장한 리포트 목록은 제목 대신 내비게이션 이름으로 찾는다)", async () => {
     renderAt("/reports");
     await screen.findByRole("heading", { name: "리포트" });
-    const headings = [...document.querySelectorAll("h1, h2")].map((h) => `${h.tagName} ${h.textContent}`);
+    const headings = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].map((h) => `${h.tagName} ${h.textContent}`);
     expect(headings[0]).toBe("H1 리포트");
-    expect(headings).toContain("H2 저장한 리포트");
+    expect(screen.getByRole("navigation", { name: "저장한 리포트" })).toBeTruthy();
   });
 
   it("없는 경로는 없는 화면이다", async () => {

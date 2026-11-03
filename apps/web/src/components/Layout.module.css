@@ -64,9 +64,7 @@
   margin: 0 auto;
 }
 
-/* 문서에서는 본문 뒤에 있지만(제목 순서) 왼쪽(좁은 화면에서는 위)에 보인다 */
 .aside {
-  order: -1;
   flex: 0 0 14rem;
   padding: var(--space-5) 0 var(--space-5) var(--space-5);
 }

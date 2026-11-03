@@ -628,7 +628,7 @@
 
 **저장한 리포트**
 - 표 `saved_reports(id uuid, name text, kind text, config jsonb, created_at, updated_at)`. `kind`는 `report`·`funnel`·`retention`이고 CHECK를 둔다. 이름은 유일하다(종류가 달라도).
-- API: `GET /saved-reports`(목록, 이름 순: 숫자는 값으로, 대소문자는 가리지 않고, 같으면 코드 포인트 순), `POST`, `PUT /saved-reports/:id`, `DELETE /saved-reports/:id`. 수집과 같은 풀을 쓴다(짧은 쓰기).
+- API: `GET /saved-reports`(목록, 이름 순: 숫자는 값으로, 대소문자는 가리지 않고, 같으면 대문자 먼저. DB 정렬은 코드 포인트 순이라 API가 `Intl.Collator`로 줄 세운다. 10장 13의 `COLLATE`를 쓰지 않은 것은 짧은 목록에 새 collation 마이그레이션을 들이지 않으려는 것이고, ICU는 Node에 들어 있어 로컬과 CI가 같다), `POST`, `PUT /saved-reports/:id`, `DELETE /saved-reports/:id`. 수집과 같은 풀을 쓴다(짧은 쓰기).
   - 본문은 공유 스키마의 `kind`별 합(`z.discriminatedUnion`)이다. **저장하는 것은 검사를 거친 값**이다(기본값이 채워진 것). 기본값이 나중에 바뀌어도 옛 설정의 뜻이 조용히 바뀌지 않는다.
   - 이름은 `Text(100)`(NUL·서로게이트 거절)이고 앞뒤 공백을 자른다. `:id`는 uuid로 검사한다(400). 이름이 겹치면 409(23505, POST와 이름을 바꾸는 PUT), 없는 id는 404다. PUT은 `updated_at = now()`다.
   - **목록의 응답은 `config: unknown`과 `valid: boolean`이다.** 서버가 행마다 `kind`의 스키마로 `safeParse`해 정한다. 응답 스키마를 `kind`별로 엄격하게 적으면, 맞지 않는 옛 설정 하나 때문에 목록 전체가 500이 된다(응답도 스키마로 직렬화하므로, 설계 리뷰).
