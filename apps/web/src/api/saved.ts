@@ -10,6 +10,12 @@ export const SAVED_KEY = ["saved-reports"] as const;
 
 export const useSavedReports = () => useQuery({ queryKey: SAVED_KEY, queryFn: listSavedReports });
 
+// 이미 읽은 목록이 있는데 다시 읽기가 실패했을 때, 마지막 목록을 계속 써도 되는지. 5xx·연결 끊김은 잠깐의 장애라
+// 마지막 목록을 두고 알린다(저장은 됐는데 열어 둔 양식·결과가 오류 화면으로 바뀌지 않게, #2 리뷰).
+// 4xx는 서버가 거절한 것이라 처음 읽기 실패처럼 다룬다.
+export const keepsLastList = (list: { status: string; error: unknown; data?: unknown }) =>
+  list.status === "error" && list.data !== undefined && !(list.error instanceof ApiError && list.error.status < 500);
+
 // 종류마다 여는 화면. 리텐션은 /retention이다(복수형이 아니다).
 export const SAVED_PATHS: Record<SavedReportKind, string> = { report: "/reports", funnel: "/funnels", retention: "/retention" };
 export const KIND_LABELS: Record<SavedReportKind, string> = { report: "리포트", funnel: "퍼널", retention: "리텐션" };
@@ -38,7 +44,7 @@ export function savedGateState<K extends SavedReportKind>(
 ): SavedGateState<K> {
   if (savedId === null) return { state: "new" };
   if (list.status === "pending") return { state: "loading" };
-  if (list.status === "error") return { state: "listError", error: list.error };
+  if (list.status === "error" && !keepsLastList(list)) return { state: "listError", error: list.error };
   const item = list.data?.items.find((i) => i.id === savedId);
   if (!item) return { state: "missing" };
   if (item.kind !== kind) return { state: "otherKind", item };

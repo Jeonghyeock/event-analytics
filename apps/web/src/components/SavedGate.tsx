@@ -1,7 +1,16 @@
 import type { SavedReport, SavedReportKind } from "@event-analytics/shared";
 import { Fragment, type ReactNode, useLayoutEffect, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
-import { KIND_LABELS, type OpenedReport, type SavedNotice, SavedNoticeContext, savedGateState, savedPath, useSavedReports } from "../api/saved";
+import {
+  KIND_LABELS,
+  keepsLastList,
+  type OpenedReport,
+  type SavedNotice,
+  SavedNoticeContext,
+  savedGateState,
+  savedPath,
+  useSavedReports,
+} from "../api/saved";
 import { DeleteSaved } from "./SaveControls";
 import styles from "./Saved.module.css";
 import { LoadError, Loading } from "./States";
@@ -63,6 +72,14 @@ export function SavedGate<K extends SavedReportKind>({
         <InvalidSaved item={gate.item} />
       ) : (
         <>
+          {keepsLastList(list) && (
+            <p className={styles.notice}>
+              저장한 리포트 목록을 새로 읽지 못했습니다. 보이는 내용은 마지막으로 읽은 목록 기준입니다.{" "}
+              <button type="button" onClick={() => void list.refetch()}>
+                다시 하기
+              </button>
+            </p>
+          )}
           {gate.state === "missing" && <p className={styles.notice}>저장한 리포트를 찾을 수 없습니다(지워졌을 수 있습니다). 새로 설정하세요.</p>}
           {gate.state === "otherKind" && (
             <p className={styles.notice}>
