@@ -3,7 +3,8 @@ import { Link, NavLink, Outlet, useLocation } from "react-router";
 import styles from "./Layout.module.css";
 import { SavedList } from "./SavedList";
 
-// 화면 셋(리포트, 퍼널, 리텐션)의 틀(DESIGN 6.7). 저장한 리포트 목록은 왼쪽(좁은 화면에서는 위)에 있다.
+// 화면 셋(리포트, 퍼널, 리텐션)의 틀(DESIGN 6.7). 저장한 리포트 목록은 왼쪽(좁은 화면에서는 위)에 보인다.
+// 문서 순서는 본문 → 목록이다. 제목이 화면의 h1 → 목록의 h2 순서로 읽히게 하고, 보이는 자리는 CSS order로 정한다.
 export function Layout() {
   const main = useRef<HTMLElement>(null);
   const location = useLocation();
@@ -25,7 +26,7 @@ export function Layout() {
 
   return (
     <div className={styles.shell}>
-      {/* 왼쪽 목록을 지나지 않고 본문으로(키보드). 주소에 #main을 붙이면 새 이동이 되어 연 화면이 새로 붙으므로 포커스만 옮긴다. */}
+      {/* 머리글의 메뉴를 지나지 않고 본문으로(키보드). 주소에 #main을 붙이면 새 이동이 되어 연 화면이 새로 붙으므로 포커스만 옮긴다. */}
       <a
         href="#main"
         className={styles.skip}
@@ -47,12 +48,12 @@ export function Layout() {
         </nav>
       </header>
       <div className={styles.columns}>
-        <aside className={styles.aside}>
-          <SavedList />
-        </aside>
         <main ref={main} id="main" tabIndex={-1} className={styles.main}>
           <Outlet />
         </main>
+        <aside className={styles.aside}>
+          <SavedList />
+        </aside>
       </div>
     </div>
   );

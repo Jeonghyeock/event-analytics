@@ -37,13 +37,18 @@ const nameTaken = (err: unknown) => {
   const e = err as { code?: string; constraint?: string };
   return e.code === "23505" && e.constraint === "saved_reports_name_key";
 };
+const byName = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+const compareNames = (a: string, b: string) => byName.compare(a, b) || (a < b ? -1 : a > b ? 1 : 0);
+
 const NAME_TAKEN = { error: "같은 이름의 저장한 리포트가 있습니다. 다른 이름을 쓰거나 덮어쓰세요", code: "name_taken" as const };
 const NOT_FOUND = { error: "저장한 리포트가 없습니다", code: "not_found" as const };
 
 export const savedReportRoutes: FastifyPluginAsyncZod<{ pool: pg.Pool }> = async (app, { pool }) => {
-  // 이름 순. 정렬은 builtin C.UTF-8의 코드 포인트 순서라 대문자가 먼저다. 그래서 lower(name)로 먼저 줄 세운다.
+  // 이름 순. DB 정렬(builtin C.UTF-8)은 코드 포인트 순이라 "리포트 10"이 "리포트 2"보다 앞이고 대문자가 먼저다.
+  // 혼자 쓰는 짧은 목록이라 여기서 줄 세운다: 숫자는 값으로, 대소문자는 가리지 않고, 그래도 같으면 코드 포인트 순으로 고정한다.
   app.get("/saved-reports", { schema: { response: { 200: SavedReportList } } }, async () => {
-    const { rows } = await pool.query<Row>(`select ${COLUMNS} from saved_reports order by lower(name), name`);
+    const { rows } = await pool.query<Row>(`select ${COLUMNS} from saved_reports`);
+    rows.sort((a, b) => compareNames(a.name, b.name));
     return { items: rows.map(toSavedReport) };
   });
 

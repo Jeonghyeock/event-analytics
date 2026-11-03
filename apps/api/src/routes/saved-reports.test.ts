@@ -49,6 +49,12 @@ describe("저장한 리포트", () => {
     expect(names.filter((n: string) => /^[A-Za-z]/.test(n))).toEqual(["Alpha", "alpha2", "beta", "Zeta"]);
   });
 
+  it("목록의 숫자는 값으로 줄 선다(코드 포인트 순이면 주간 10이 주간 2보다 앞)", async () => {
+    for (const name of ["주간 10", "주간 2", "주간 1"]) await create(name, "retention", retention);
+    const names = (await send("GET", "/saved-reports")).json().items.map((i: { name: string }) => i.name);
+    expect(names.filter((n: string) => /^주간 \d+$/.test(n))).toEqual(["주간 1", "주간 2", "주간 10"]);
+  });
+
   it("이름이 겹치면 종류가 달라도 409다", async () => {
     await create("겹침");
     const res = await send("POST", "/saved-reports", { name: "겹침", kind: "funnel", config: funnel });
