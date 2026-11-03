@@ -45,7 +45,8 @@ const NOT_FOUND = { error: "저장한 리포트가 없습니다", code: "not_fou
 
 export const savedReportRoutes: FastifyPluginAsyncZod<{ pool: pg.Pool }> = async (app, { pool }) => {
   // 이름 순. DB 정렬(builtin C.UTF-8)은 코드 포인트 순이라 "리포트 10"이 "리포트 2"보다 앞이고 대문자가 먼저다.
-  // 혼자 쓰는 짧은 목록이라 여기서 줄 세운다: 숫자는 값으로, 대소문자는 가리지 않고, 그래도 같으면 코드 포인트 순으로 고정한다.
+  // 혼자 쓰는 짧은 목록이라 여기서 줄 세운다: 숫자는 값으로, 대소문자는 가리지 않고, 그래도 같으면 JS 문자열 비교(대문자 먼저)로 고정한다.
+  // 이름은 DB에서 유일하므로 두 비교가 모두 같은 경우는 없다(10장 13의 COLLATE 대신 쓴 까닭은 DESIGN 6.7).
   app.get("/saved-reports", { schema: { response: { 200: SavedReportList } } }, async () => {
     const { rows } = await pool.query<Row>(`select ${COLUMNS} from saved_reports`);
     rows.sort((a, b) => compareNames(a.name, b.name));

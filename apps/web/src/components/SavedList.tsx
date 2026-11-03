@@ -11,7 +11,8 @@ export function SavedList() {
   const isCurrent = (id: string, kind: keyof typeof SAVED_PATHS) => id === params.get("saved") && pathname === SAVED_PATHS[kind];
   return (
     <nav aria-label="저장한 리포트" className={styles.list}>
-      <h2>저장한 리포트</h2>
+      {/* 제목 요소가 아니다. 목록이 문서에서 본문 앞에 있어, h2면 화면의 h1보다 먼저 읽힌다. 목록은 내비게이션 이름으로 찾는다. */}
+      <p className={styles.title}>저장한 리포트</p>
       {list.isPending ? (
         <p className={styles.hint}>읽는 중…</p>
       ) : list.isError ? (

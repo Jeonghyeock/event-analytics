@@ -55,6 +55,12 @@ describe("저장한 리포트", () => {
     expect(names.filter((n: string) => /^주간 \d+$/.test(n))).toEqual(["주간 1", "주간 2", "주간 10"]);
   });
 
+  it("대소문자만 다른 이름은 넣은 순서와 상관없이 대문자가 먼저다", async () => {
+    for (const name of ["kappa", "Kappa"]) await create(name, "retention", retention);
+    const names = (await send("GET", "/saved-reports")).json().items.map((i: { name: string }) => i.name);
+    expect(names.filter((n: string) => /^kappa$/i.test(n))).toEqual(["Kappa", "kappa"]);
+  });
+
   it("이름이 겹치면 종류가 달라도 409다", async () => {
     await create("겹침");
     const res = await send("POST", "/saved-reports", { name: "겹침", kind: "funnel", config: funnel });
