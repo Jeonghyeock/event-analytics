@@ -13,6 +13,7 @@ export function SavedList() {
     <nav aria-label="저장한 리포트" className={styles.list}>
       {/* 제목 요소가 아니다. 목록이 문서에서 본문 앞에 있어, h2면 화면의 h1보다 먼저 읽힌다. 목록은 내비게이션 이름으로 찾는다. */}
       <p className={styles.title}>저장한 리포트</p>
+      {/* 다시 읽기만 실패했으면(keepsLastList) 마지막 목록을 둔다. isLoadingError를 따로 적어야 TS가 아래 갈래에서 data를 좁힌다 */}
       {list.isPending ? (
         <p className={styles.hint}>읽는 중…</p>
       ) : list.isLoadingError || (list.isRefetchError && !keepsLastList(list)) ? (
@@ -43,7 +44,7 @@ export function SavedList() {
       {keepsLastList(list) && (
         <p className={styles.hint}>
           목록을 새로 읽지 못했습니다.{" "}
-          <button type="button" onClick={() => void list.refetch()}>
+          <button type="button" onClick={() => void list.refetch()} disabled={list.isFetching}>
             다시 하기
           </button>
         </p>
