@@ -121,6 +121,19 @@ describe("ReportsPage", () => {
     expect(await screen.findByRole("button", { name: "다시 하기" })).toBeTruthy();
   });
 
+  it("차원 1을 지금 차원 2와 같은 값으로 바꾸면 차원 2를 비운다 — 보이는 '없음'과 상태가 같아 그대로 보낼 수 있다(#3 리뷰)", async () => {
+    handler = () => ({ status: 200, body: { rows: [], meta } });
+    renderPage();
+    fireEvent.change(screen.getByLabelText("차원 1"), { target: { value: "platform" } });
+    fireEvent.change(screen.getByLabelText("차원 2"), { target: { value: "country" } });
+    fireEvent.change(screen.getByLabelText("차원 1"), { target: { value: "country" } });
+    expect((screen.getByLabelText("차원 2") as HTMLSelectElement).value).toBe("");
+    await userEvent.click(screen.getByRole("button", { name: "보기" }));
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    expect(requests[0]?.dimensions).toEqual(["country"]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("틀린 설정은 보내지 않고 양식에 알린다", async () => {
     handler = () => ({ status: 200, body: { rows: [], meta } });
     renderPage();

@@ -22,6 +22,9 @@ export function ReportForm({ initial, onSubmit }: { initial: Form; onSubmit: (q:
     const next = [...dimensions];
     if (value === "") next.splice(slot, 1);
     else next[slot] = value as (typeof DIMENSIONS)[number];
+    // 차원 1을 지금 차원 2와 같게 바꾸면 차원 2를 비운다 — 차원 2 칸은 그 값을 빼고 그려 '없음'으로 보이는데,
+    // 상태에 중복이 남으면 '보기'가 계속 거절되고 그 칸만으로는 풀 수 없었다(#3 리뷰).
+    if (slot === 0 && next[1] === next[0]) next.splice(1, 1);
     set({ dimensions: next });
   };
   const unusedFilterDimension = DIMENSIONS.find((d) => !filters.some((f) => f.dimension === d));
