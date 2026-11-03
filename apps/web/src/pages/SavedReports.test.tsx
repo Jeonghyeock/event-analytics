@@ -65,6 +65,7 @@ let runs: { path: string; body: Record<string, unknown> }[];
 let writes: { method: string; path: string; body?: unknown }[];
 let reportFailure: { status: number; body: unknown } | null;
 let listFails: boolean;
+let listFailStatus: number;
 // 저장한 리포트 쓰기(hold)와 리포트 세기(holdRuns)의 응답을 붙잡아 둔다(기다리는 사이의 일을 보려고). 풀면 응답이 나간다.
 let hold: Promise<void> | null;
 let holdRuns: Promise<void> | null;
@@ -89,6 +90,7 @@ beforeEach(() => {
   writes = [];
   reportFailure = null;
   listFails = false;
+  listFailStatus = 500;
   hold = null;
   holdRuns = null;
   holdList = null;
@@ -100,7 +102,7 @@ beforeEach(() => {
       const body = init.body === undefined ? undefined : (JSON.parse(String(init.body)) as Record<string, unknown>);
       if (url === "/api/saved-reports" && method === "GET") {
         if (holdList) await holdList;
-        if (listFails) return json({ error: "서버 오류" }, 500);
+        if (listFails) return json({ error: "서버 오류" }, listFailStatus);
         return json({ items: store.toSorted((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase())) });
       }
       if (url.startsWith("/api/saved-reports")) {
@@ -230,6 +232,36 @@ describe("목록 다시 읽기 실패(#2 리뷰)", () => {
     await userEvent.click(within(main).getByRole("button", { name: "다시 하기" }));
     await vi.waitFor(() => expect(screen.queryByText(/새로 읽지 못했습니다/)).toBeNull());
     expect(within(main).getByRole("table")).toBeTruthy();
+  });
+
+  it("4xx로 거절되면 처음 읽기 실패처럼 오류를 보인다", async () => {
+    renderAt(`/reports?saved=${ID.daily}`);
+    await screen.findByRole("table");
+    listFails = true;
+    listFailStatus = 400;
+    await queryClient.refetchQueries({ queryKey: SAVED_KEY });
+    expect(await within(screen.getByRole("main")).findByRole("alert")).toBeTruthy();
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(within(savedList()).getByText(/목록을 읽지 못했습니다/)).toBeTruthy();
+  });
+
+  it("마지막 목록에 없는 것을 열면 '찾을 수 없음'(지워졌을 수 있음) 대신 읽지 못했다고 알린다", async () => {
+    const router = renderAt("/reports");
+    await within(savedList()).findAllByRole("link");
+    listFails = true;
+    await queryClient.refetchQueries({ queryKey: SAVED_KEY });
+    await router.navigate("/reports?saved=00000000-0000-4000-8000-000000000999");
+    expect(await within(screen.getByRole("main")).findByRole("alert")).toBeTruthy();
+    expect(screen.queryByText(/지워졌을 수 있습니다/)).toBeNull();
+  });
+
+  it("?saved 없이 연 화면은 목록과 상관없으니 본문에는 알리지 않고 왼쪽 목록에만 알린다", async () => {
+    renderAt("/reports");
+    await within(savedList()).findAllByRole("link");
+    listFails = true;
+    await queryClient.refetchQueries({ queryKey: SAVED_KEY });
+    expect(await within(savedList()).findByText(/목록을 새로 읽지 못했습니다/)).toBeTruthy();
+    expect(within(screen.getByRole("main")).queryByText(/새로 읽지 못했습니다/)).toBeNull();
   });
 });
 

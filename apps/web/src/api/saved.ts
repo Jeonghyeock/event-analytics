@@ -2,7 +2,7 @@ import { SAVED_REPORT_CONFIGS, type SavedReport, type SavedReportKind } from "@e
 import { hashKey, useQuery } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 import type { z } from "zod";
-import { ApiError } from "./client";
+import { ApiError, NetworkError } from "./client";
 import { listSavedReports } from "./endpoints";
 
 // 저장한 리포트(DESIGN 6.7, 10장 52). 목록은 캐시 하나(왼쪽 목록과 화면이 함께 쓴다). 저장·지우기는 이 키를 다시 읽게 한다.
@@ -10,11 +10,13 @@ export const SAVED_KEY = ["saved-reports"] as const;
 
 export const useSavedReports = () => useQuery({ queryKey: SAVED_KEY, queryFn: listSavedReports });
 
-// 이미 읽은 목록이 있는데 다시 읽기가 실패했을 때, 마지막 목록을 계속 써도 되는지. 5xx·연결 끊김은 잠깐의 장애라
-// 마지막 목록을 두고 알린다(저장은 됐는데 열어 둔 양식·결과가 오류 화면으로 바뀌지 않게, #2 리뷰).
-// 4xx는 서버가 거절한 것이라 처음 읽기 실패처럼 다룬다.
+// 이미 읽은 목록이 있는데 다시 읽기가 잠깐의 장애(연결 끊김·5xx)로 실패했으면 마지막 목록을 계속 쓴다 —
+// 저장은 됐는데 열어 둔 양식·결과가 오류 화면으로 바뀌지 않게(#2 리뷰). 4xx·응답 계약 오류는 다시 해도 같으므로
+// 처음 읽기 실패처럼 다룬다.
 export const keepsLastList = (list: { status: string; error: unknown; data?: unknown }) =>
-  list.status === "error" && list.data !== undefined && !(list.error instanceof ApiError && list.error.status < 500);
+  list.status === "error" &&
+  list.data !== undefined &&
+  (list.error instanceof NetworkError || (list.error instanceof ApiError && list.error.status >= 500));
 
 // 종류마다 여는 화면. 리텐션은 /retention이다(복수형이 아니다).
 export const SAVED_PATHS: Record<SavedReportKind, string> = { report: "/reports", funnel: "/funnels", retention: "/retention" };
@@ -46,7 +48,8 @@ export function savedGateState<K extends SavedReportKind>(
   if (list.status === "pending") return { state: "loading" };
   if (list.status === "error" && !keepsLastList(list)) return { state: "listError", error: list.error };
   const item = list.data?.items.find((i) => i.id === savedId);
-  if (!item) return { state: "missing" };
+  // 마지막 목록에 없으면 지워졌는지 새로 생겼는지 알 수 없다 — '찾을 수 없음' 대신 읽지 못했다고 알린다
+  if (!item) return keepsLastList(list) ? { state: "listError", error: list.error } : { state: "missing" };
   if (item.kind !== kind) return { state: "otherKind", item };
   const parsed = SAVED_REPORT_CONFIGS[kind].safeParse(item.config);
   if (!item.valid || !parsed.success) return { state: "invalid", item };

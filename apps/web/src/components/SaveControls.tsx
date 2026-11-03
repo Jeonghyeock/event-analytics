@@ -81,9 +81,9 @@ export function SaveControls<K extends SavedReportKind>({
               setErrors(["이 이름은 이미 있습니다. 다른 이름을 고르세요."]);
               return;
             }
-            // 이름의 주인을 새 목록에서 찾는다(캐시가 오래됐을 수 있다)
-            const list = await queryClient.fetchQuery({ queryKey: SAVED_KEY, queryFn: listSavedReports, staleTime: 0 });
-            const owner = list.items.find((i) => i.name === input.name);
+            // 이름의 주인을 새 목록에서 찾는다(캐시가 오래됐을 수 있다). 목록을 못 읽으면 주인을 모른 채 알린다
+            const list = await queryClient.fetchQuery({ queryKey: SAVED_KEY, queryFn: listSavedReports, staleTime: 0 }).catch(() => null);
+            const owner = list?.items.find((i) => i.name === input.name);
             if (owner && owner.id === opened?.item.id) {
               setErrors(["지금 연 리포트의 이름입니다. 다른 이름을 쓰세요."]);
             } else if (owner && owner.kind === kind) {

@@ -64,6 +64,15 @@ export function SavedGate<K extends SavedReportKind>({
       <p className="visually-hidden" role="status">
         {current?.text}
       </p>
+      {/* 연 저장한 리포트가 마지막 목록 기준일 때만 알린다(?saved가 없으면 본문은 목록과 상관없다) */}
+      {gate.state !== "new" && gate.state !== "listError" && keepsLastList(list) && (
+        <p className={styles.notice}>
+          저장한 리포트 목록을 새로 읽지 못했습니다. 보이는 내용은 마지막으로 읽은 목록 기준입니다.{" "}
+          <button type="button" onClick={() => void list.refetch()} disabled={list.isFetching}>
+            다시 하기
+          </button>
+        </p>
+      )}
       {gate.state === "loading" ? (
         <Loading label="저장한 리포트를 읽는 중…" />
       ) : gate.state === "listError" ? (
@@ -72,14 +81,6 @@ export function SavedGate<K extends SavedReportKind>({
         <InvalidSaved item={gate.item} />
       ) : (
         <>
-          {keepsLastList(list) && (
-            <p className={styles.notice}>
-              저장한 리포트 목록을 새로 읽지 못했습니다. 보이는 내용은 마지막으로 읽은 목록 기준입니다.{" "}
-              <button type="button" onClick={() => void list.refetch()}>
-                다시 하기
-              </button>
-            </p>
-          )}
           {gate.state === "missing" && <p className={styles.notice}>저장한 리포트를 찾을 수 없습니다(지워졌을 수 있습니다). 새로 설정하세요.</p>}
           {gate.state === "otherKind" && (
             <p className={styles.notice}>
