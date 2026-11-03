@@ -1,5 +1,5 @@
 import { Link, useLocation, useSearchParams } from "react-router";
-import { KIND_LABELS, SAVED_PATHS, savedPath, useSavedReports } from "../api/saved";
+import { KIND_LABELS, keepsLastList, SAVED_PATHS, savedPath, useSavedReports } from "../api/saved";
 import styles from "./Saved.module.css";
 
 // 왼쪽의 저장한 리포트 목록(DESIGN 6.7). 세 화면 모두에서 연다. 지금의 스키마에 맞지 않는 것은 "열 수 없음"을 붙인다(열면 지우기만 된다).
@@ -15,7 +15,7 @@ export function SavedList() {
       <p className={styles.title}>저장한 리포트</p>
       {list.isPending ? (
         <p className={styles.hint}>읽는 중…</p>
-      ) : list.isError ? (
+      ) : list.isLoadingError || (list.isRefetchError && !keepsLastList(list)) ? (
         <p className={styles.hint}>
           목록을 읽지 못했습니다.{" "}
           <button type="button" onClick={() => void list.refetch()}>
@@ -39,6 +39,14 @@ export function SavedList() {
             </li>
           ))}
         </ul>
+      )}
+      {keepsLastList(list) && (
+        <p className={styles.hint}>
+          목록을 새로 읽지 못했습니다.{" "}
+          <button type="button" onClick={() => void list.refetch()}>
+            다시 하기
+          </button>
+        </p>
       )}
     </nav>
   );

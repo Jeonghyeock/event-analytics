@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "../api/queries";
+import { SAVED_KEY } from "../api/saved";
 import { routes } from "../router";
 
 // 저장한 리포트(DESIGN 6.7, 10장 52): 왼쪽 목록에서 열고, 보이는 결과의 설정을 저장한다. 서버는 fetch를 바꿔 흉내 낸 저장소다.
@@ -151,10 +152,13 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
+let queryClient: ReturnType<typeof createQueryClient>;
+
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
+  queryClient = createQueryClient();
   render(
-    <QueryClientProvider client={createQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
     </QueryClientProvider>,
   );
@@ -206,6 +210,26 @@ describe("왼쪽 목록", () => {
     renderAt(`/reports?saved=${ID.funnel}`);
     await within(savedList()).findAllByRole("link");
     expect(within(savedList()).queryByRole("link", { current: "page" })).toBeNull();
+  });
+});
+
+describe("목록 다시 읽기 실패(#2 리뷰)", () => {
+  it("이미 읽은 목록이 있으면 연 화면(양식·결과)과 왼쪽 목록을 그대로 두고, 새로 읽지 못했다고 알린다", async () => {
+    renderAt(`/reports?saved=${ID.daily}`);
+    await screen.findByRole("table");
+    listFails = true; // 저장 뒤 등 목록을 다시 읽는데 서버가 500
+    await queryClient.refetchQueries({ queryKey: SAVED_KEY });
+    const main = screen.getByRole("main");
+    expect(await within(main).findByText(/저장한 리포트 목록을 새로 읽지 못했습니다/)).toBeTruthy();
+    expect(within(main).getByRole("table")).toBeTruthy();
+    expect(within(main).getByRole("button", { name: "보기" })).toBeTruthy();
+    expect(within(savedList()).getByRole("link", { name: /일별 이벤트/ })).toBeTruthy();
+    expect(within(savedList()).getByText(/목록을 새로 읽지 못했습니다/)).toBeTruthy();
+
+    listFails = false;
+    await userEvent.click(within(main).getByRole("button", { name: "다시 하기" }));
+    await vi.waitFor(() => expect(screen.queryByText(/새로 읽지 못했습니다/)).toBeNull());
+    expect(within(main).getByRole("table")).toBeTruthy();
   });
 });
 
