@@ -1,5 +1,5 @@
 import { buildApp } from "./app.js";
-import { createPool } from "./db/pool.js";
+import { createPool, poolErrorLog } from "./db/pool.js";
 import { createLoadStats } from "./load-stats.js";
 import { startPartitionWatch } from "./partition-watch.js";
 import { startRollupLoop } from "./rollup.js";
@@ -32,7 +32,7 @@ const stats = server.loadStatsDir
 const app = buildApp(pool, { logger: { level: server.logLevel } }, { ingestWriteKey, reportPool });
 app.log.info(server, "서버 설정");
 stats?.attach(app);
-rollupPool.on("error", (err) => app.log.error({ err }, "집계 풀의 쉬는 연결이 끊김"));
+rollupPool.on("error", (err) => app.log.error(poolErrorLog(err), "집계 풀의 쉬는 연결이 끊김"));
 const stopRollup = startRollupLoop(rollupPool, app.log, undefined, stats?.recordRollup);
 // 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고한다(DESIGN 6.2).
 const stopWatch = startPartitionWatch(pool, app.log);

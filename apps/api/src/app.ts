@@ -3,6 +3,7 @@ import { HealthResponse, HealthUnavailable } from "@event-analytics/shared";
 import Fastify, { type FastifyError, type FastifyServerOptions } from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
 import type pg from "pg";
+import { poolErrorLog } from "./db/pool.js";
 import type { ReportOptions } from "./reports/run.js";
 import { funnelRoutes } from "./routes/funnels.js";
 import { ingestRoutes } from "./routes/ingest.js";
@@ -24,9 +25,9 @@ export function buildApp(
 
   // 풀에서 쉬는 연결이 끊기면(DB 재시작, pg_terminate_backend) 풀이 'error'를 낸다. 듣는 쪽이 없으면 프로세스가 죽는다.
   // 끊긴 연결은 풀이 버리고 다음 요청에 새로 맺으므로 로그만 남긴다.
-  pool.on("error", (err) => app.log.error({ err }, "풀의 쉬는 연결이 끊김"));
+  pool.on("error", (err) => app.log.error(poolErrorLog(err), "풀의 쉬는 연결이 끊김"));
   if (services.reportPool && services.reportPool !== pool) {
-    services.reportPool.on("error", (err) => app.log.error({ err }, "리포트 풀의 쉬는 연결이 끊김"));
+    services.reportPool.on("error", (err) => app.log.error(poolErrorLog(err), "리포트 풀의 쉬는 연결이 끊김"));
   }
 
   // 5xx는 오류 내용을 로그에만 남기고 응답에는 싣지 않는다(SQL 문장과 파라미터가 들어 있을 수 있다).

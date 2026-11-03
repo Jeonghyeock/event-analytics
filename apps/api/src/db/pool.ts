@@ -26,3 +26,6 @@ export function createPool(config: pg.PoolConfig): pg.Pool {
   const options = [fromUrl, config.options, "-c TimeZone=UTC"].filter(Boolean).join(" ");
   return new pg.Pool({ ...config, connectionString, options });
 }
+
+// 풀의 'error'(쉬는 연결이 끊김)를 로그에 남길 모양. pg-pool이 오류에 붙인 client(연결 정보 통째)는 싣지 않는다.
+export const poolErrorLog = (err: Error & { code?: string }) => ({ err: { message: err.message, code: err.code } });
