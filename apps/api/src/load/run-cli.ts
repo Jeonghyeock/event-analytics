@@ -23,7 +23,7 @@ import {
   type Window,
 } from "./report.js";
 import { snapshotStats, startActivitySampler } from "./samplers.js";
-import { checkTemplateName, cloneLoadDatabase, LOAD_DATABASE, loadDatabaseState, RESULTS_DIR, TEMPLATE_DATABASE, templateInfoFile } from "./template.js";
+import { checkTemplateName, cloneLoadDatabase, cycleRejection, LOAD_DATABASE, loadDatabaseState, RESULTS_DIR, TEMPLATE_DATABASE, templateInfoFile } from "./template.js";
 
 // 부하 측정(DESIGN 6.8). seat-booking 6단계의 실행기를 가져왔다. 회차마다:
 //   템플릿 복제(FILE_COPY, 지난 7일 ~ 앞으로 7일의 파티션) → 상태 기록(더러운 시간이 있으면 거절) → API(P코어, LOAD_STATS) → 집계 따라잡기
@@ -190,7 +190,8 @@ async function runCycle({ name, vars, seconds }: Cycle) {
     await cloneLoadDatabase(ownerUrl!, { template });
     const before = await loadDatabaseState(loadAppUrl);
     out.stateBefore = before;
-    if (before.dirtyHours > 0) throw new Error(`복제본에 더러운 시간이 ${before.dirtyHours}개 있습니다. 템플릿을 다시 만드세요`);
+    const rejection = cycleRejection(before);
+    if (rejection) throw new Error(rejection);
 
     const apiLog = openSync(path.join(dir, "api/api.log"), "w");
     const api = spawn(process.execPath, ["--import", "tsx", "src/main.ts"], {
