@@ -2,7 +2,7 @@ import pg from "pg";
 import { describe, expect, inject, it, onTestFinished } from "vitest";
 import { freshDatabase } from "../../test/fresh-database.js";
 import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js";
-import { addDays, createDailyPartitions, dbToday, partitionName } from "../db/partitions.js";
+import { addDays, createDailyPartitions, dbToday, partitionName, RETENTION_DAYS } from "../db/partitions.js";
 import { insertEvents } from "../ingest.js";
 import { generate } from "./generate.js";
 import {
@@ -90,6 +90,17 @@ describe("측정 템플릿", () => {
     const staleState = await loadDatabaseState(url);
     expect(staleState.staleDirtyHours).toBe(1);
     expect(cycleRejection(staleState)).toMatch(/워터마크 앞에 더러운 시간이 1개/);
+    // 보관 기간 앞의 더러운 시간은 집계 작업이 다시 세지 않고 지우기만 하므로 세지 않는다
+    const edits = new pg.Client({ connectionString: url });
+    await edits.connect();
+    await edits.query(`insert into dirty_hours (hour) values (date_trunc('hour', now(), 'UTC') - interval '${RETENTION_DAYS + 2} days')`);
+    expect((await loadDatabaseState(url)).staleDirtyHours).toBe(1);
+    // 워터마크 행이 없으면(손으로 만든 원본 등) 회차를 돌리지 않는다
+    await edits.query("delete from rollup_state");
+    await edits.end();
+    const noWatermark = await loadDatabaseState(url);
+    expect(noWatermark.watermark).toBeNull();
+    expect(cycleRejection(noWatermark)).toMatch(/워터마크\(rollup_state 행\)가 없습니다/);
     // 아직 분석하지 않은 새 파티션(reltuples = -1)은 행 수를 줄이지 않는다
     expect(Math.round(cloned.eventRows)).toBe(3_000);
     // 관리 작업처럼 부모의 통계를 새로 했다(템플릿에는 없다)
