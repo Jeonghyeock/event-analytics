@@ -59,3 +59,27 @@ describe("GET /health", () => {
     expect(res.statusCode).toBe(404);
   });
 });
+
+describe("Host 검사", () => {
+  const pool = createPool({ connectionString: inject("databaseUrl") });
+  const app = buildApp(pool);
+  afterAll(async () => {
+    await app.close();
+    await pool.end();
+  });
+
+  it("이 컴퓨터 이름이 아닌 Host는 400 — DNS 리바인딩으로 다른 사이트가 리포트를 읽거나 지우지 못한다(#4 리뷰)", async () => {
+    for (const host of ["evil.example:3002", "localhost.evil.example", "192.168.0.5:3002"]) {
+      const list = await app.inject({ method: "GET", url: "/saved-reports", headers: { host } });
+      expect(list.statusCode, host).toBe(400);
+      const health = await app.inject({ method: "GET", url: "/health", headers: { host } });
+      expect(health.statusCode, host).toBe(400);
+    }
+  });
+
+  it("127.0.0.1·localhost·[::1]은 포트와 상관없이 받는다(Vite 프록시는 화면의 Host를 그대로 넘긴다)", async () => {
+    for (const host of ["127.0.0.1:3002", "localhost:5180", "LOCALHOST", "[::1]:3002"]) {
+      expect((await app.inject({ method: "GET", url: "/saved-reports", headers: { host } })).statusCode, host).toBe(200);
+    }
+  });
+});
