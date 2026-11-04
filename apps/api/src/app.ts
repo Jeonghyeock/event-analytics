@@ -11,6 +11,9 @@ import { reportRoutes } from "./routes/reports.js";
 import { retentionRoutes } from "./routes/retention.js";
 import { savedReportRoutes } from "./routes/saved-reports.js";
 
+// Host 머리의 이름(포트를 뺀 것, IPv6는 대괄호째)
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
 // 요청은 packages/shared의 zod 스키마로 검증하고, 응답도 같은 스키마로 직렬화한다.
 // ingestWriteKey를 넘기지 않으면 무작위 키를 만든다. 아무도 모르는 키라 수집은 모두 401이다(안전한 기본값).
 // reportPool은 리포트·퍼널·리텐션 전용 풀이다(없으면 pool을 함께 쓴다, 테스트). reports는 그 한도와 "지금"을 테스트가 바꿀 때만 넘긴다.
@@ -29,6 +32,12 @@ export function buildApp(
   if (services.reportPool && services.reportPool !== pool) {
     services.reportPool.on("error", (err) => app.log.error(poolErrorLog(err), "리포트 풀의 쉬는 연결이 끊김"));
   }
+
+  // 이 컴퓨터에서만 쓴다(127.0.0.1에 연다). DNS 리바인딩으로 다른 사이트가 같은 origin처럼 부르면 Host가 그 사이트 이름이라,
+  // 이 컴퓨터 이름이 아닌 Host는 거절한다(#4 리뷰). 포트는 보지 않는다 — Vite 프록시는 화면의 Host(localhost:5180)를 그대로 넘긴다.
+  app.addHook("onRequest", async (request, reply) => {
+    if (!LOCAL_HOSTS.has(request.hostname.toLowerCase())) return reply.code(400).send({ error: "이 컴퓨터의 주소(127.0.0.1·localhost)로만 받습니다" });
+  });
 
   // 5xx는 오류 내용을 로그에만 남기고 응답에는 싣지 않는다(SQL 문장과 파라미터가 들어 있을 수 있다).
   // 4xx(요청 검증 실패 등)는 무엇이 틀렸는지 알려 준다.
