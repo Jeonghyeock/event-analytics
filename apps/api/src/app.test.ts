@@ -68,12 +68,15 @@ describe("Host 검사", () => {
     await pool.end();
   });
 
-  it("이 컴퓨터 이름이 아닌 Host는 400 — DNS 리바인딩으로 다른 사이트가 리포트를 읽거나 지우지 못한다(#4 리뷰)", async () => {
+  it("이 컴퓨터 이름이 아닌 Host는 421 — DNS 리바인딩으로 다른 사이트가 리포트를 읽거나 지우지 못한다(#4 리뷰)", async () => {
     for (const host of ["evil.example:3002", "localhost.evil.example", "192.168.0.5:3002"]) {
       const list = await app.inject({ method: "GET", url: "/saved-reports", headers: { host } });
-      expect(list.statusCode, host).toBe(400);
+      expect(list.statusCode, host).toBe(421);
       const health = await app.inject({ method: "GET", url: "/health", headers: { host } });
-      expect(health.statusCode, host).toBe(400);
+      expect(health.statusCode, host).toBe(421);
+      // 수집도 같다. 400이 아니라서 seat-booking relay가 주소 문제를 '본문이 틀렸다'로 보지 않는다
+      const ingest = await app.inject({ method: "POST", url: "/ingest", headers: { host }, payload: { events: [] } });
+      expect(ingest.statusCode, host).toBe(421);
     }
   });
 

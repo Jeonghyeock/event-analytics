@@ -42,7 +42,7 @@ npm run test:e2e -w @event-analytics/web      # E2E: 전용 DB(event_analytics_e
                                              # (처음 한 번: npx playwright install chromium)
 ```
 
-API는 이 컴퓨터의 주소로만 받는다. Host가 127.0.0.1·localhost·[::1]이 아니면 400이다(DNS 리바인딩 막기, 다른 기기에서 여는 구성은 지원하지 않는다).
+API는 이 컴퓨터의 주소로만 받는다. Host가 127.0.0.1·localhost·[::1]이 아니면 421이다(DNS 리바인딩 막기, 다른 기기에서 여는 구성은 지원하지 않는다). `HOST`도 이 셋만 받는다.
 
 `db:maintain`은 하루 한 번 돌린다(cron, Windows 작업 스케줄러). 앞으로 7일치를 미리 만들므로 며칠 멈춰도 수집은 계속된다. 서버는 받을 기간과 앞으로 3일 안에 파티션이 없는 날이 있으면 경고 로그를 남긴다.
 

@@ -1,4 +1,4 @@
-import { buildApp } from "./app.js";
+import { buildApp, LOCAL_HOSTS } from "./app.js";
 import { createPool, poolErrorLog } from "./db/pool.js";
 import { createLoadStats } from "./load-stats.js";
 import { startPartitionWatch } from "./partition-watch.js";
@@ -16,6 +16,10 @@ if (ingestWriteKey.length < 32) throw new Error("INGEST_WRITE_KEY가 없거나 3
 // seat-booking(3001)과 함께 띄울 수 있게 기본값을 3002로 둔다.
 const port = Number(process.env.PORT ?? 3002);
 const host = process.env.HOST ?? "127.0.0.1";
+// 이 컴퓨터에서만 받는다(app.ts의 Host 검사). 다른 주소에 열면 모든 요청이 421이 되므로 시작할 때 막는다.
+if (!LOCAL_HOSTS.has(host.includes(":") ? `[${host}]` : host)) {
+  throw new Error(`HOST는 127.0.0.1·localhost·::1만 됩니다(지금 ${host}) — API는 이 컴퓨터에서만 받습니다`);
+}
 // 풀 크기(DB_POOL_MAX, REPORT_POOL_MAX), 로그 수준(LOG_LEVEL), 부하 측정의 1초 지표(LOAD_STATS, DESIGN 6.8)
 const server = loadServerConfig(process.env);
 
