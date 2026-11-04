@@ -129,8 +129,12 @@ export async function loadDatabaseState(url: string) {
   await client.connect();
   try {
     const one = async <T>(sql: string) => (await client.query<T & pg.QueryResultRow>(sql)).rows[0]!;
-    const rollup = await one<{ dirty_hours: number; watermark: Date | null }>(
-      "select (select count(*)::int from dirty_hours) as dirty_hours, (select watermark from rollup_state) as watermark",
+    // 워터마크 앞의 더러운 시간만 집계 표가 틀렸다는 뜻이다. 워터마크와 그 뒤(수집이 적는 지금·다음 시간)는 집계 작업이
+    // 워터마크를 옮길 때 [옛 워터마크, 새 워터마크)를 통째로 다시 세므로 그때 맞춰진다.
+    const rollup = await one<{ dirty_hours: number; stale_dirty_hours: number; watermark: Date | null }>(
+      `select (select count(*)::int from dirty_hours) as dirty_hours,
+              (select count(*)::int from dirty_hours where hour < (select watermark from rollup_state)) as stale_dirty_hours,
+              (select watermark from rollup_state) as watermark`,
     );
     // 아직 분석하지 않은 파티션의 reltuples는 -1이라 0으로 센다
     const events = await one<{ partitions: number; rows: number; first_day: string | null; last_day: string | null }>(
@@ -171,6 +175,7 @@ export async function loadDatabaseState(url: string) {
     return {
       at: new Date().toISOString(),
       dirtyHours: rollup.dirty_hours,
+      staleDirtyHours: rollup.stale_dirty_hours,
       watermark: rollup.watermark?.toISOString() ?? null,
       partitions: events.partitions,
       eventRows: events.rows,
@@ -188,3 +193,10 @@ export async function loadDatabaseState(url: string) {
 }
 
 export type LoadDatabaseState = Awaited<ReturnType<typeof loadDatabaseState>>;
+
+// 회차를 시작하지 않을 이유(없으면 null). 워터마크 앞의 더러운 시간이 남았으면 집계 표가 틀린 채라 거절한다.
+// 템플릿을 만든 시각의 지금·다음 시간은 워터마크 뒤라 남아도 된다 — 예열이 집계 작업을 지금까지 따라잡게 하며 다시 센다.
+// 전에는 더러운 시간 전체를 세어, 성공한 템플릿의 모든 회차를 거절했다(#5 리뷰).
+export function cycleRejection(state: Pick<LoadDatabaseState, "staleDirtyHours">): string | null {
+  return state.staleDirtyHours > 0 ? `복제본의 워터마크 앞에 더러운 시간이 ${state.staleDirtyHours}개 있습니다. 템플릿을 다시 만드세요` : null;
+}

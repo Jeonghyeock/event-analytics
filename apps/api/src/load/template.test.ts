@@ -5,7 +5,16 @@ import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js"
 import { addDays, createDailyPartitions, dbToday, partitionName } from "../db/partitions.js";
 import { insertEvents } from "../ingest.js";
 import { generate } from "./generate.js";
-import { buildLoadTemplate, checkSourceName, checkTemplateName, cloneLoadDatabase, loadDatabaseState, TEMPLATE_INFO_FILE, templateInfoFile } from "./template.js";
+import {
+  buildLoadTemplate,
+  checkSourceName,
+  checkTemplateName,
+  cloneLoadDatabase,
+  cycleRejection,
+  loadDatabaseState,
+  TEMPLATE_INFO_FILE,
+  templateInfoFile,
+} from "./template.js";
 
 // 측정 템플릿(DESIGN 6.8, 10장 59). 실제 이름(event_analytics_load*) 대신 테스트마다의 이름으로 만든다.
 describe("측정 템플릿", () => {
@@ -26,6 +35,8 @@ describe("측정 템플릿", () => {
       "insert into dirty_hours (hour) select generate_series($1::timestamptz, $2::timestamptz - interval '1 hour', interval '1 hour')",
       [`${addDays(today, -3)}T00:00:00Z`, `${today}T00:00:00Z`],
     );
+    // 수집은 지금 시간과 다음 시간도 더러운 시간에 적는다. 집계 작업은 지금 정시 앞까지만 가져가므로 템플릿에 남는다(#5 리뷰)
+    await owner.query("insert into dirty_hours (hour) values (date_trunc('hour', now(), 'UTC')), (date_trunc('hour', now(), 'UTC') + interval '1 hour') on conflict do nothing");
     // 개발 DB처럼 원본의 부모에 통계가 있어도 템플릿에서는 지운다
     await owner.query("analyze events");
     // 복제하려면 원본에 연결이 없어야 한다
@@ -42,7 +53,9 @@ describe("측정 템플릿", () => {
     );
     const sourceName = new URL(source.owner).pathname.slice(1);
     const state = await buildLoadTemplate(ownerUrl, { source: sourceName, template });
-    expect(state.dirtyHours).toBe(0);
+    // 워터마크 앞의 더러운 시간은 모두 집계했고, 지금·다음 시간은 남는다(회차의 예열이 따라잡으며 다시 센다)
+    expect(state.staleDirtyHours).toBe(0);
+    expect(state.dirtyHours).toBeGreaterThan(0);
     expect(state.partitions).toBe(3);
     expect(Math.round(state.eventRows)).toBe(3_000);
     const parts = state.tables.find((t) => t.name === "events_*")!;
@@ -66,7 +79,17 @@ describe("측정 템플릿", () => {
     });
     // 새로 만든 파티션도 autovacuum이 꺼져 있다(LIKE로는 이어받지 않는다)
     expect(cloned.tables.find((t) => t.name === "events_*")).toMatchObject({ autovacuum_off: true });
-    expect(cloned.dirtyHours).toBe(0);
+    // 템플릿을 만든 시각의 지금·다음 시간만 남은 복제본으로는 회차를 돌린다
+    expect(cloned.staleDirtyHours).toBe(0);
+    expect(cycleRejection(cloned)).toBeNull();
+    // 워터마크 앞에 더러운 시간이 있으면 집계 표가 틀린 채라 거절한다
+    const stale = new pg.Client({ connectionString: url });
+    await stale.connect();
+    await stale.query("insert into dirty_hours (hour) select watermark - interval '1 hour' from rollup_state on conflict do nothing");
+    await stale.end();
+    const staleState = await loadDatabaseState(url);
+    expect(staleState.staleDirtyHours).toBe(1);
+    expect(cycleRejection(staleState)).toMatch(/워터마크 앞에 더러운 시간이 1개/);
     // 아직 분석하지 않은 새 파티션(reltuples = -1)은 행 수를 줄이지 않는다
     expect(Math.round(cloned.eventRows)).toBe(3_000);
     // 관리 작업처럼 부모의 통계를 새로 했다(템플릿에는 없다)
