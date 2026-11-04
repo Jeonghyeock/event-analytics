@@ -1,7 +1,7 @@
 import pg from "pg";
 import { dropDatabase, withAdminClient, withDatabase } from "../db/databases.js";
 import { runMigrations } from "../db/migrate.js";
-import { addDays, AHEAD_DAYS, analyzeParent, BEHIND_DAYS, createDailyPartitions, dbToday } from "../db/partitions.js";
+import { addDays, AHEAD_DAYS, analyzeParent, BEHIND_DAYS, createDailyPartitions, dbToday, RETENTION_DAYS } from "../db/partitions.js";
 import { createPool } from "../db/pool.js";
 import { runRollup } from "../rollup.js";
 
@@ -129,13 +129,21 @@ export async function loadDatabaseState(url: string) {
   await client.connect();
   try {
     const one = async <T>(sql: string) => (await client.query<T & pg.QueryResultRow>(sql)).rows[0]!;
-    // 워터마크 앞의 더러운 시간만 집계 표가 틀렸다는 뜻이다. 워터마크와 그 뒤(수집이 적는 지금·다음 시간)는 집계 작업이
-    // 워터마크를 옮길 때 [옛 워터마크, 새 워터마크)를 통째로 다시 세므로 그때 맞춰진다.
-    const rollup = await one<{ dirty_hours: number; stale_dirty_hours: number; watermark: Date | null }>(
-      `select (select count(*)::int from dirty_hours) as dirty_hours,
-              (select count(*)::int from dirty_hours where hour < (select watermark from rollup_state)) as stale_dirty_hours,
-              (select watermark from rollup_state) as watermark`,
-    );
+    // 집계 표가 틀렸다는 뜻인 더러운 시간은 [보관 기간의 시작, 워터마크)의 것뿐이다(rollup.ts와 같은 경계).
+    // 워터마크와 그 뒤(수집이 적는 지금·다음 시간)는 집계 작업이 워터마크를 옮길 때 [옛 워터마크, 새 워터마크)를 통째로
+    // 다시 세고, 보관 기간 앞의 것은 다시 세지 않고 지우기만 한다. rollup_state 행이 없으면 워터마크가 null이다.
+    const rollup = (
+      await client.query<{ dirty_hours: number; stale_dirty_hours: number; watermark: Date | null }>(
+        `select count(d.hour)::int as dirty_hours,
+                count(d.hour) filter (where d.hour >= r.retained and d.hour < s.watermark)::int as stale_dirty_hours,
+                s.watermark
+           from (select (select watermark from rollup_state) as watermark) s
+           cross join lateral (select ((now() at time zone 'UTC')::date - $1::int)::timestamp at time zone 'UTC' as retained) r
+           left join dirty_hours d on true
+          group by s.watermark`,
+        [RETENTION_DAYS],
+      )
+    ).rows[0]!;
     // 아직 분석하지 않은 파티션의 reltuples는 -1이라 0으로 센다
     const events = await one<{ partitions: number; rows: number; first_day: string | null; last_day: string | null }>(
       `select count(*)::int as partitions, coalesce(sum(greatest(c.reltuples, 0)), 0)::bigint::float8 as rows,
@@ -197,6 +205,7 @@ export type LoadDatabaseState = Awaited<ReturnType<typeof loadDatabaseState>>;
 // 회차를 시작하지 않을 이유(없으면 null). 워터마크 앞의 더러운 시간이 남았으면 집계 표가 틀린 채라 거절한다.
 // 템플릿을 만든 시각의 지금·다음 시간은 워터마크 뒤라 남아도 된다 — 예열이 집계 작업을 지금까지 따라잡게 하며 다시 센다.
 // 전에는 더러운 시간 전체를 세어, 성공한 템플릿의 모든 회차를 거절했다(#5 리뷰).
-export function cycleRejection(state: Pick<LoadDatabaseState, "staleDirtyHours">): string | null {
+export function cycleRejection(state: Pick<LoadDatabaseState, "staleDirtyHours" | "watermark">): string | null {
+  if (state.watermark === null) return "복제본에 워터마크(rollup_state 행)가 없습니다. 템플릿을 다시 만드세요";
   return state.staleDirtyHours > 0 ? `복제본의 워터마크 앞에 더러운 시간이 ${state.staleDirtyHours}개 있습니다. 템플릿을 다시 만드세요` : null;
 }

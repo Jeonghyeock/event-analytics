@@ -20,6 +20,6 @@ mkdirSync(fileURLToPath(RESULTS_DIR), { recursive: true });
 writeFileSync(infoFile, JSON.stringify({ template, source, seconds, state }, null, 2));
 console.log(
   `${template}: ${source}에서 ${seconds}초, 파티션 ${state.partitions}개(${state.days.first}~${state.days.last}), ` +
-    `행 약 ${Math.round(state.eventRows).toLocaleString()}, 워터마크 ${state.watermark}, 더러운 시간 ${state.dirtyHours}`,
+    `행 약 ${Math.round(state.eventRows).toLocaleString()}, 워터마크 ${state.watermark}, 더러운 시간 ${state.dirtyHours}(그중 워터마크 앞 ${state.staleDirtyHours})`,
 );
 console.log(`기록: ${fileURLToPath(infoFile)}`);
